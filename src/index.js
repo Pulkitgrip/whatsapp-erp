@@ -8,12 +8,17 @@ const app = express();
 
 // CORS configuration - allow all origins
 const corsOptions = {
-  origin: '*',
+  origin: [
+    '*', // Allow all origins
+    'http://localhost:5173', // Specific local port
+    'https://erp-whatsapp.vercel.app' // Specific external domain
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: false, // Set to false when using origin: '*'
   optionsSuccessStatus: 200
 };
+
 
 app.use(cors(corsOptions));
 app.use(express.json());
