@@ -1,8 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const sequelize = require('./sequelize');
-const User = require('./models/user');
 const errorHandler = require('./middleware/errorHandler');
 const createError = require('http-errors');
 
@@ -10,10 +8,34 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Sync Sequelize models
-sequelize.sync({alter: true})
-  .then(() => console.log('Database synced'))
-  .catch((err) => console.error('Sequelize sync error:', err));
+// Health check endpoint (no database required)
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Server is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Test database connection and sync models
+async function initializeDatabase() {
+  try {
+    const sequelize = require('./sequelize');
+    const User = require('./models/user');
+    
+    await sequelize.authenticate();
+    console.log('Database connection has been established successfully.');
+    
+    await sequelize.sync({ alter: true });
+    console.log('Database synced successfully');
+  } catch (error) {
+    console.error('Database initialization error:', error);
+    // Don't exit, just log the error
+  }
+}
+
+// Initialize database
+initializeDatabase();
 
 // Import routes
 app.use('/api', require('./routes/index'));
