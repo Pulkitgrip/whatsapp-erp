@@ -53,7 +53,7 @@ async function initializeDatabase() {
     await sequelize.authenticate();
     console.log('Database connection has been established successfully.');
     
-    await sequelize.sync({ alter: true });
+    await sequelize.sync({ alter: false });
     console.log('Database synced successfully');
   } catch (error) {
     console.error('Database initialization error:', error);
