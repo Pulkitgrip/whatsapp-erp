@@ -1,5 +1,6 @@
 const Category = require('../models/category');
 const createError = require('http-errors');
+const prepareQueryOptions = require('../utils/queryOptions');
 
 exports.createCategory = async (req, res, next) => {
   try {
@@ -13,8 +14,24 @@ exports.createCategory = async (req, res, next) => {
 
 exports.getCategories = async (req, res, next) => {
   try {
-    const categories = await Category.findAll();
-    res.json({ status: 200, message: 'Categories fetched successfully', data: { categories } });
+    const options = prepareQueryOptions(req.query, ['name']);
+    // Remove limit/offset for total count
+    const totalCount = await Category.count();
+    // Use findAndCountAll for filtered count and results
+    const { count, rows: categories } = await Category.findAndCountAll(options);
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    res.json({
+      status: 200,
+      message: 'Categories fetched successfully',
+      data: {
+      count,        
+      totalCount,  
+      page,
+      limit,
+      categories
+      }
+    });
   } catch (err) {
     next(err);
   }

@@ -1,6 +1,7 @@
 const Product = require('../models/product');
 const Category = require('../models/category');
 const createError = require('http-errors');
+const prepareQueryOptions = require('../utils/queryOptions');
 
 exports.createProduct = async (req, res, next) => {
   try {
@@ -16,8 +17,25 @@ exports.createProduct = async (req, res, next) => {
 
 exports.getProducts = async (req, res, next) => {
   try {
-    const products = await Product.findAll({ include: Category });
-    res.json({ status: 200, message: 'Products fetched successfully', data: { products } });
+    const options = prepareQueryOptions(req.query, ['name']);
+    options.include = [Category];
+    // Remove limit/offset for total count
+    const totalCount = await Product.count();
+    // Use findAndCountAll for filtered count and results
+    const { count, rows: products } = await Product.findAndCountAll(options);
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    res.json({
+      status: 200,
+      message: 'Products fetched successfully',
+      data: {
+        count,
+        totalCount,
+        page,
+        limit,
+        products
+      }
+    });
   } catch (err) {
     next(err);
   }
