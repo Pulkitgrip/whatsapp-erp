@@ -4,14 +4,14 @@ const createError = require('http-errors');
 const User = require('../models/user');
 
 exports.signup = async (req, res, next) => {
-  const { email, password } = req.body;
+  const { email, password, role } = req.body;
   try {
     const userExists = await User.findOne({ where: { email } });
     if (userExists) {
       throw createError(400, 'User already exists');
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ email, password: hashedPassword });
+    await User.create({ email, password: hashedPassword, role });
     res.status(201).json({ status: 'success', message: 'User created successfully' });
   } catch (err) {
     next(err);
