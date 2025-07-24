@@ -70,3 +70,65 @@ exports.getUsers = async (req, res, next) => {
     next(err);
   }
 }; 
+
+exports.updateUser = async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+    const { name, email, mobileNo, role, password } = req.body;
+    
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return next(createError(404, 'User not found'));
+    }
+    
+    // Check if email is being changed and if it already exists
+    if (email && email !== user.email) {
+      const emailExists = await User.findOne({ where: { email } });
+      if (emailExists) {
+        return next(createError(400, 'Email already exists'));
+      }
+    }
+    
+    // Update fields
+    if (name !== undefined) user.name = name;
+    if (email !== undefined) user.email = email;
+    if (mobileNo !== undefined) user.mobileNo = mobileNo;
+    if (role !== undefined) user.role = role;
+    
+    // Hash password if provided
+    if (password) {
+      user.password = await bcrypt.hash(password, 10);
+    }
+    
+    await user.save();
+    
+    res.json({
+      status: 200,
+      message: 'User updated successfully',
+      data: { user }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.deleteUser = async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+    
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return next(createError(404, 'User not found'));
+    }
+    
+    await user.destroy();
+    
+    res.json({
+      status: 200,
+      message: 'User deleted successfully',
+      data: null
+    });
+  } catch (err) {
+    next(err);
+  }
+}; 
