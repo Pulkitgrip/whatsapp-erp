@@ -1,5 +1,7 @@
 const bcrypt = require('bcryptjs');
 const createError = require('http-errors');
+const prepareQueryOptions = require('../utils/queryOptions');
+const { Op } = require('sequelize');
 const User = require('../models/user');
 
 exports.addUser = async (req, res, next) => {
@@ -28,6 +30,41 @@ exports.addUser = async (req, res, next) => {
       status: 200,
       message: 'User added successfully',
       data: { user }
+    });
+  } catch (err) {
+    next(err);
+  }
+}; 
+
+exports.getUsers = async (req, res, next) => {
+  try {
+    const options = prepareQueryOptions(req.query, ['name', 'email', 'mobileNo', 'role']);
+    
+    // Add role filter if provided
+    if (req.query.role) {
+      const roles = req.query.role.includes(',') ? req.query.role.split(',') : [req.query.role];
+      options.where = {
+        ...options.where,
+        role: { [Op.in]: roles }
+      };
+    }
+    
+    // Remove limit/offset for total count
+    const totalCount = await User.count();
+    // Use findAndCountAll for filtered count and results
+    const { count, rows: users } = await User.findAndCountAll(options);
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    res.json({
+      status: 200,
+      message: 'Users fetched successfully',
+      data: {
+        count,
+        totalCount,
+        page,
+        limit,
+        users
+      }
     });
   } catch (err) {
     next(err);
