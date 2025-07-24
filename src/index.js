@@ -5,7 +5,17 @@ const errorHandler = require('./middleware/errorHandler');
 const createError = require('http-errors');
 
 const app = express();
-app.use(cors());
+
+// CORS configuration - allow all origins
+const corsOptions = {
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: false, // Set to false when using origin: '*'
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Health check endpoint (no database required)
