@@ -11,8 +11,8 @@ exports.signup = async (req, res, next) => {
       throw createError(400, 'User already exists');
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ email, password: hashedPassword, role });
-    res.status(201).json({ status: 'success', message: 'User created successfully' });
+    const user = await User.create({ email, password: hashedPassword, role });
+    res.status(201).json({ status: 200, message: 'User created successfully', data: { user } });
   } catch (err) {
     next(err);
   }
@@ -30,7 +30,7 @@ exports.login = async (req, res, next) => {
       throw createError(400, 'Invalid credentials');
     }
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    res.json({ status: 'success', message: 'Login successful', token });
+    res.json({ status: 200, message: 'Login successful', data: { token } });
   } catch (err) {
     next(err);
   }
