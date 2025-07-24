@@ -1,44 +1,39 @@
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
-// Use only the exact environment variable names that are already configured
 let sequelize;
 
 try {
-  // First, try to require pg explicitly
-  require('pg');
-  
-  sequelize = new Sequelize(
-    process.env.DATABASE_URL || 
-    `postgresql://${process.env.PG_USER}:${process.env.PG_PASSWORD}@${process.env.PG_HOST}:${process.env.PG_PORT || 5432}/${process.env.PG_DATABASE}`,
-    {
-      dialect: 'postgres',
+  // Check if using SQLite (for local development/testing)
+  if (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('sqlite:')) {
+    sequelize = new Sequelize(process.env.DATABASE_URL, {
+      dialect: 'sqlite',
       logging: false,
-      dialectOptions: {
-        ssl: {
-          rejectUnauthorized: false,
-          ca: process.env.PG_SSL_CA
+      storage: './database.sqlite'
+    });
+  } else {
+    // PostgreSQL configuration
+    sequelize = new Sequelize(
+      process.env.PG_DATABASE,
+      process.env.PG_USER,
+      process.env.PG_PASSWORD,
+      {
+        host: process.env.PG_HOST,
+        port: process.env.PG_PORT,
+        dialect: 'postgres',
+        logging: false,
+        dialectOptions: {
+          ssl: {
+            require: true,
+            rejectUnauthorized: false
+          }
         }
       }
-    }
-  );
+    );
+  }
 } catch (error) {
   console.error('Error initializing Sequelize:', error);
-  
-  // Fallback: try with minimal configuration
-  try {
-    sequelize = new Sequelize(
-      process.env.DATABASE_URL || 
-      `postgresql://${process.env.PG_USER}:${process.env.PG_PASSWORD}@${process.env.PG_HOST}:${process.env.PG_PORT || 5432}/${process.env.PG_DATABASE}`,
-      {
-        dialect: 'postgres',
-        logging: false
-      }
-    );
-  } catch (fallbackError) {
-    console.error('Fallback configuration also failed:', fallbackError);
-    throw new Error('Database configuration failed');
-  }
+  throw new Error('Database configuration failed');
 }
 
-module.exports = sequelize; 
+module.exports = sequelize;
