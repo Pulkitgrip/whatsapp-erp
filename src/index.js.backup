@@ -1,0 +1,64 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const errorHandler = require('./middleware/errorHandler');
+const createError = require('http-errors');
+
+const app = express();
+
+// CORS configuration - allow all origins
+const corsOptions = {
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: false, // Set to false when using origin: '*'
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// Health check endpoint (no database required)
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Server is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Test database connection and sync models
+async function initializeDatabase() {
+  try {
+    const sequelize = require('./sequelize');
+    const User = require('./models/user');
+    
+    await sequelize.authenticate();
+    console.log('Database connection has been established successfully.');
+    
+    await sequelize.sync({ alter: false });
+    console.log('Database synced successfully');
+  } catch (error) {
+    console.error('Database initialization error:', error);
+    // Don't exit, just log the error
+  }
+}
+
+// Initialize database
+initializeDatabase();
+
+// Import routes
+app.use('/api', require('./routes/index'));
+
+// 404 handler
+app.use((req, res, next) => {
+  next(createError(404, 'Not Found'));
+});
+
+// Centralized error handler
+app.use(errorHandler);
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+}); 
