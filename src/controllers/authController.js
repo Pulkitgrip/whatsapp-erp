@@ -34,4 +34,16 @@ exports.login = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+exports.getProfile = async (req, res, next) => {
+  try {
+    // req.user is set by the auth middleware
+    if (!req.user) {
+      return next(createError(401, 'Not authenticated'));
+    }
+    res.json({ status: 200, message: 'User profile fetched successfully', data: { user: req.user } });
+  } catch (err) {
+    next(err);
+  }
 }; 
