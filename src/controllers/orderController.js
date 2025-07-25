@@ -9,6 +9,47 @@ const ProductDemand = require('../models/productDemand');
 const createError = require('http-errors');
 const sequelize = require('../sequelize');
 const { Op } = require('sequelize');
+const prepareQueryOptions = require('../utils/queryOptions');
+const nodemailer = require('nodemailer');
+
+async function sendOrderStatusEmail(user, order) {
+  // Setup transporter (reuse from authController)
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.NODEMAILER_USER,
+      pass: process.env.NODEMAILER_PASSWORD,
+    },
+    secure: true,
+    tls: { rejectUnauthorized: false }
+  });
+
+  const mailOptions = {
+    from: {
+      name: 'WhatsERP',
+      address: process.env.NODEMAILER_USER
+    },
+    to: user.email,
+    subject: `Order #${order.id} Status Update`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #fff; padding: 32px; border-radius: 8px;">
+        <h2 style="color: #333;">Order Status Update</h2>
+        <p>Hello ${user.name || user.email},</p>
+        <p>Your order <strong>#${order.id}</strong> status has been updated.</p>
+        <ul style="font-size: 16px;">
+          <li><strong>Status:</strong> ${order.status}</li>
+          <li><strong>Payment Status:</strong> ${order.paymentStatus}</li>
+          <li><strong>Amount:</strong> ${order.amount}</li>
+        </ul>
+        <p>Thank you for shopping with us!</p>
+        <hr style="margin: 32px 0;">
+        <p style="font-size: 12px; color: #888;">If you have any questions, contact support.</p>
+      </div>
+    `,
+    text: `Your order #${order.id} status has been updated.\nStatus: ${order.status}\nPayment Status: ${order.paymentStatus}\nAmount: ${order.amount}`
+  };
+  await transporter.sendMail(mailOptions);
+}
 
 exports.createOrder = async (req, res, next) => {
   const transaction = await sequelize.transaction();
@@ -196,37 +237,65 @@ exports.createOrder = async (req, res, next) => {
 
 exports.getOrders = async (req, res, next) => {
   try {
-    const orders = await Order.findAll({
-      include: [
-        {
-          model: User,
-          attributes: ['id', 'name', 'email', 'mobileNo']
-        },
-        {
-          model: Customer,
-          attributes: ['id', 'name', 'gstNo', 'address']
-        },
-        {
-          model: OrderItem,
-          include: [
-            {
-              model: Product,
-              attributes: ['id', 'name', 'unitPrice']
-            },
-            {
-              model: Stock,
-              attributes: ['id', 'buyPrice']
-            }
-          ]
-        }
-      ],
-      order: [['createdAt', 'DESC']]
-    });
+    // Prepare query options for pagination, search, and sorting
+    const options = prepareQueryOptions(req.query, []);
+
+    // Add filter for order status and paymentStatus
+    options.where = options.where || {};
+    if (req.query.status) {
+      options.where.status = req.query.status;
+    }
+    if (req.query.paymentStatus) {
+      options.where.paymentStatus = req.query.paymentStatus;
+    }
+
+    // Always include these associations
+    options.include = [
+      {
+        model: User,
+        attributes: ['id', 'name', 'email', 'mobileNo']
+      },
+      {
+        model: Customer,
+        attributes: ['id', 'name', 'gstNo', 'address']
+      },
+      {
+        model: OrderItem,
+        include: [
+          {
+            model: Product,
+            attributes: ['id', 'name', 'unitPrice']
+          },
+          {
+            model: Stock,
+            attributes: ['id', 'buyPrice']
+          }
+        ]
+      }
+    ];
+
+    // Default sort if not provided
+    if (!options.order) {
+      options.order = [['createdAt', 'DESC']];
+    }
+
+    // Get total count for all orders (without filters)
+    const totalCount = await Order.count();
+    // Get filtered count and results
+    const { count, rows: orders } = await Order.findAndCountAll(options);
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
 
     res.json({
       status: 200,
       message: 'Orders fetched successfully',
-      data: { orders }
+      data: {
+        count,
+        totalCount,
+        page,
+        limit,
+        orders
+      }
     });
   } catch (err) {
     next(err);
@@ -276,58 +345,108 @@ exports.getOrderById = async (req, res, next) => {
 };
 
 exports.updateOrderStatus = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
   try {
     const { status, paymentStatus } = req.body;
-    
-    const order = await Order.findByPk(req.params.id);
+    const order = await Order.findByPk(req.params.id, { include: [OrderItem, User] });
     if (!order) {
+      await transaction.rollback();
       return next(createError(404, 'Order not found'));
     }
 
-    if (status) {
+    // Track if we need to update stock
+    let updateStock = false;
+    let stockAction = null;
+    if (status && status !== order.status) {
+      if (status === 'confirmed') {
+        updateStock = true;
+        stockAction = 'deduct_reserved';
+      } else if (status === 'cancelled') {
+        updateStock = true;
+        stockAction = 'cancel_restore';
+      }
       order.status = status;
     }
-    
     if (paymentStatus) {
       order.paymentStatus = paymentStatus;
     }
+    await order.save({ transaction });
 
-    await order.save();
+    // Update stock if needed
+    if (updateStock) {
+      for (const item of order.OrderItems) {
+        const stock = await Stock.findByPk(item.StockId, { transaction });
+        if (!stock) continue;
+        if (stockAction === 'deduct_reserved') {
+          // Deduct from reservedQnt only
+          stock.reservedQnt = Math.max(0, stock.reservedQnt - item.quantity);
+          await stock.save({ transaction });
+        } else if (stockAction === 'cancel_restore') {
+          // Move reservedQnt back to availableQnt
+          stock.reservedQnt = Math.max(0, stock.reservedQnt - item.quantity);
+          stock.availableQnt += item.quantity;
+          await stock.save({ transaction });
+        }
+      }
+    }
 
+    await transaction.commit();
+    // Send email to user after commit
+    if (order.User) {
+      try {
+        await sendOrderStatusEmail(order.User, order);
+      } catch (emailErr) {
+        console.error('Failed to send order status email:', emailErr);
+      }
+    }
     res.json({
       status: 200,
       message: 'Order updated successfully',
       data: { order }
     });
   } catch (err) {
+    await transaction.rollback();
     next(err);
   }
 };
 
 exports.getProductDemands = async (req, res, next) => {
   try {
-    const demands = await ProductDemand.findAll({
-      include: [
-        {
-          model: Product,
-          attributes: ['id', 'name', 'unitPrice']
-        },
-        {
-          model: User,
-          attributes: ['id', 'name', 'email', 'mobileNo']
-        },
-        {
-          model: Customer,
-          attributes: ['id', 'name', 'gstNo']
-        }
-      ],
-      order: [['createdAt', 'DESC']]
-    });
-
+    // Prepare query options for pagination, search, and sorting
+    const options = prepareQueryOptions(req.query, []);
+    options.include = [
+      {
+        model: Product,
+        attributes: ['id', 'name', 'unitPrice']
+      },
+      {
+        model: User,
+        attributes: ['id', 'name', 'email', 'mobileNo']
+      },
+      {
+        model: Customer,
+        attributes: ['id', 'name', 'gstNo']
+      }
+    ];
+    if (!options.order) {
+      options.order = [['createdAt', 'DESC']];
+    }
+    // Get total count for all demands (without filters)
+    const totalCount = await ProductDemand.count();
+    // Get filtered count and results
+    const { count, rows: demands } = await ProductDemand.findAndCountAll(options);
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
     res.json({
       status: 200,
       message: 'Product demands fetched successfully',
-      data: { demands }
+      data: {
+        count,
+        totalCount,
+        page,
+        limit,
+        demands
+      }
     });
   } catch (err) {
     next(err);

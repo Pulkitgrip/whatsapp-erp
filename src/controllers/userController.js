@@ -132,3 +132,20 @@ exports.deleteUser = async (req, res, next) => {
     next(err);
   }
 }; 
+
+exports.getUserById = async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return next(createError(404, 'User not found'));
+    }
+    res.json({
+      status: 200,
+      message: 'User fetched successfully',
+      data: { user }
+    });
+  } catch (err) {
+    next(err);
+  }
+}; 
