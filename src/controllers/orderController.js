@@ -104,45 +104,45 @@ exports.createOrder = async (req, res, next) => {
         continue; // Skip if product doesn't exist
       }
 
-      // Find available stock for this product
+      // Find any stock for this product
       const stock = await Stock.findOne({
-        where: { 
-          ProductId: ProductId,
-          availableQnt: { [Op.gte]: quantity }
-        },
-        order: [['createdAt', 'ASC']] // FIFO - First In, First Out
+        where: { ProductId: ProductId },
+        order: [['createdAt', 'ASC']]
       });
 
       if (stock) {
-        // Stock available
-        availableItems.push({
-          ProductId,
-          StockId: stock.id,
-          quantity,
-          unitPrice: stock.buyPrice,
-          totalPrice: quantity * stock.buyPrice,
-          productName: product.name
-        });
-        totalAmount += quantity * stock.buyPrice;
-      } else {
-        // Stock not available - log demand
-        unavailableItems.push({
-          ProductId,
-          productName: product.name,
-          quantity,
-          UserId: user.id,
-          CustomerId: customer.id
-        });
+        let reserveQnt = 0;
+        if (stock.availableQnt >= quantity) {
+          reserveQnt = quantity;
+        } else if (stock.availableQnt > 0) {
+          reserveQnt = stock.availableQnt;
+        } else {
+          reserveQnt = 0;
+        }
 
-        // Create demand record
-        await ProductDemand.create({
-          ProductId,
-          productName: product.name,
-          quantity,
-          UserId: user.id,
-          CustomerId: customer.id
-        }, { transaction });
-      }
+        console.log(reserveQnt);
+
+        // if (reserveQnt > 0) {
+          availableItems.push({
+            ProductId,
+            StockId: stock.id,
+            quantity: item.quantity,
+            unitPrice: stock.buyPrice,
+            totalPrice: reserveQnt * stock.buyPrice,
+            productName: product.name
+          });
+          totalAmount += item.quantity * stock.buyPrice;
+          // Adjust stock immediately
+
+          const availableQnt = stock.availableQnt > 0 ? stock.availableQnt - reserveQnt  : stock.availableQnt - item.quantity;
+
+          await stock.update({
+            availableQnt,
+            reservedQnt: stock.reservedQnt + reserveQnt
+          }, { transaction });
+        // }
+        // If reserveQnt is 0, skip (do not log demand)
+      } // If no stock, skip (do not log demand)
     }
 
     if (availableItems.length === 0) {
@@ -193,12 +193,12 @@ exports.createOrder = async (req, res, next) => {
 
       createdOrderItems.push(orderItem);
 
-      // Adjust stock quantities
-      const stock = await Stock.findByPk(item.StockId, { transaction });
-      await stock.update({
-        availableQnt: stock.availableQnt - item.quantity,
-        reservedQnt: stock.reservedQnt + item.quantity
-      }, { transaction });
+      // // Adjust stock quantities
+      // const stock = await Stock.findByPk(item.StockId, { transaction });
+      // await stock.update({
+      //   availableQnt: stock.availableQnt - item.quantity,
+      //   reservedQnt: stock.reservedQnt + item.quantity
+      // }, { transaction });
     }
 
     await transaction.commit();
@@ -359,6 +359,27 @@ exports.updateOrderStatus = async (req, res, next) => {
     let stockAction = null;
     if (status && status !== order.status) {
       if (status === 'confirmed') {
+        // Check stock availability before confirming
+        const insufficientStocks = [];
+        for (const item of order.OrderItems) {
+          const stock = await Stock.findByPk(item.StockId, { transaction });
+          if (!stock || (stock.availableQnt + stock.reservedQnt) < item.quantity) {
+            insufficientStocks.push({
+              ProductId: item.ProductId,
+              StockId: item.StockId,
+              required: item.quantity,
+              available: stock ? stock.availableQnt : 0
+            });
+          }
+        }
+        if (insufficientStocks.length > 0) {
+          await transaction.rollback();
+          return res.status(400).json({
+            status: 400,
+            message: 'Insufficient stock for one or more items. Cannot confirm order.',
+            data: { insufficientStocks }
+          });
+        }
         updateStock = true;
         stockAction = 'deduct_reserved';
       } else if (status === 'cancelled') {
@@ -378,8 +399,14 @@ exports.updateOrderStatus = async (req, res, next) => {
         const stock = await Stock.findByPk(item.StockId, { transaction });
         if (!stock) continue;
         if (stockAction === 'deduct_reserved') {
-          // Deduct from reservedQnt only
-          stock.reservedQnt = Math.max(0, stock.reservedQnt - item.quantity);
+          // Deduct reservedQnt first, then availableQnt if needed
+          let toDeduct = item.quantity;
+          let reservedToDeduct = Math.min(stock.reservedQnt, toDeduct);
+          stock.reservedQnt = Math.max(0, stock.reservedQnt - reservedToDeduct);
+          toDeduct -= reservedToDeduct;
+          if (toDeduct > 0) {
+            stock.availableQnt = Math.max(0, stock.availableQnt - toDeduct);
+          }
           await stock.save({ transaction });
         } else if (stockAction === 'cancel_restore') {
           // Move reservedQnt back to availableQnt
@@ -393,11 +420,9 @@ exports.updateOrderStatus = async (req, res, next) => {
     await transaction.commit();
     // Send email to user after commit
     if (order.User) {
-      try {
-        await sendOrderStatusEmail(order.User, order);
-      } catch (emailErr) {
-        console.error('Failed to send order status email:', emailErr);
-      }
+      sendOrderStatusEmail(order.User, order).catch(err => {
+      console.error('Failed to send order status email:', err);
+      });
     }
     res.json({
       status: 200,
