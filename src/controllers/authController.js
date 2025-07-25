@@ -32,7 +32,7 @@ exports.login = async (req, res, next) => {
     if (!validPassword) {
       throw createError(400, 'Invalid credentials');
     }
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.json({ status: 200, message: 'Login successful', data: { token } });
   } catch (err) {
     next(err);
@@ -180,7 +180,7 @@ exports.requestPasswordReset = async (req, res, next) => {
     const resetUrl = `${process.env.PASSWORD_RESET_PAGE_URL}?token=${resetToken}`;
     console.log('resetUrl', resetUrl);
     // send email with resetUrl
-    sendPasswordResetEmail('jay.jethava@alchemytech.ca', resetUrl);
+    sendPasswordResetEmail(email, resetUrl);
 
     res.json({ status: 200, message: 'Password reset email sent', data: null });
   } catch (err) {

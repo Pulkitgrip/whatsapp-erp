@@ -1,13 +1,16 @@
 const createError = require('http-errors');
 const prepareQueryOptions = require('../utils/queryOptions');
 const { Op } = require('sequelize');
+const sequelize = require('../sequelize');
 const Customer = require('../models/customer');
 const User = require('../models/user');
-require('../models/userCustomer'); // Import to ensure associations are loaded
+const UserCustomer = require('../models/userCustomer'); // Import to ensure associations are loaded
 
 exports.createCustomer = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  
   try {
-    const { name, gstNo, address } = req.body;
+    const { name, gstNo, address, users = [] } = req.body;
     
     // Check if customer already exists with same name or gstNo
     const existingCustomer = await Customer.findOne({
@@ -21,16 +24,128 @@ exports.createCustomer = async (req, res, next) => {
     
     if (existingCustomer) {
       const duplicateField = existingCustomer.name === name ? 'name' : 'GST number';
+      await transaction.rollback();
       return next(createError(400, `Customer with this ${duplicateField} already exists`));
     }
+
+    // Process users if provided
+    let createdUsers = [];
+    let skippedUsers = [];
     
-    const customer = await Customer.create({ name, gstNo, address });
+    if (users && users.length > 0) {
+      const bcrypt = require('bcryptjs');
+      
+      // Extract mobile numbers and emails from input users
+      const mobileNumbers = users
+        .filter(user => user.mobileNo)
+        .map(user => user.mobileNo);
+      
+      const emails = users
+        .filter(user => user.email)
+        .map(user => user.email);
+      
+      // Check for existing users with same mobile numbers or emails
+      const whereConditions = [];
+      if (mobileNumbers.length > 0) {
+        whereConditions.push({ mobileNo: { [Op.in]: mobileNumbers } });
+      }
+      if (emails.length > 0) {
+        whereConditions.push({ email: { [Op.in]: emails } });
+      }
+      
+      let existingUsers = [];
+      if (whereConditions.length > 0) {
+        existingUsers = await User.findAll({
+          where: {
+            [Op.or]: whereConditions
+          },
+          attributes: ['mobileNo', 'email']
+        });
+      }
+      
+      const existingMobileNumbers = existingUsers.map(user => user.mobileNo).filter(Boolean);
+      const existingEmails = existingUsers.map(user => user.email).filter(Boolean);
+      
+      // Filter out users with existing mobile numbers or emails
+      const validUsers = [];
+      
+      for (const user of users) {
+        let skipReason = null;
+        
+        // Check if email is provided (required field)
+        if (!user.email) {
+          skipReason = 'Email is required';
+        }
+        // Check for duplicate mobile number
+        else if (user.mobileNo && existingMobileNumbers.includes(user.mobileNo)) {
+          skipReason = 'User with this mobile number already exists';
+        }
+        // Check for duplicate email
+        else if (user.email && existingEmails.includes(user.email)) {
+          skipReason = 'User with this email already exists';
+        }
+        
+        if (skipReason) {
+          skippedUsers.push({
+            ...user,
+            reason: skipReason
+          });
+        } else {
+          validUsers.push({
+            name: user.name,
+            email: user.email,
+            mobileNo: user.mobileNo,
+            role: 'user' // Default role
+          });
+        }
+      }
+      
+      // Bulk create valid users
+      if (validUsers.length > 0) {
+        createdUsers = await User.bulkCreate(validUsers, { 
+          transaction,
+          returning: true 
+        });
+      }
+    }
+    
+    // Create customer
+    const customer = await Customer.create({ name, gstNo, address }, { transaction });
+    
+    // Create user-customer associations
+    if (createdUsers.length > 0) {
+      const userCustomerData = createdUsers.map(user => ({
+        userId: user.id,
+        customerId: customer.id
+      }));
+      
+      await UserCustomer.bulkCreate(userCustomerData, { transaction });
+    }
+    
+    await transaction.commit();
+    
     res.status(201).json({
       status: 200,
       message: 'Customer created successfully',
-      data: { customer }
+      data: { 
+        customer,
+        createdUsers: createdUsers.map(user => ({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          mobileNo: user.mobileNo,
+          role: user.role
+        })),
+        skippedUsers,
+        summary: {
+          totalUsersProvided: users.length,
+          usersCreated: createdUsers.length,
+          usersSkipped: skippedUsers.length
+        }
+      }
     });
   } catch (err) {
+    await transaction.rollback();
     next(err);
   }
 };
