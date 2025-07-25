@@ -5,7 +5,6 @@ const errorHandler = require('./middleware/errorHandler');
 const createError = require('http-errors');
 const fs = require('fs');
 const path = require('path');
-const indexRoutes = require('./routes/index');
 
 const app = express();
 
