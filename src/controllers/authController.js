@@ -67,7 +67,7 @@ const sendPasswordResetEmail = async (email, resetUrl) => {
     });
     const mailOptions = {
       from: {
-        name: 'Your App Name', // Add sender name
+        name: 'WhatsERP', // Add sender name
         address: process.env.NODEMAILER_USER
       },
       to: email,
@@ -141,7 +141,7 @@ const sendPasswordResetEmail = async (email, resetUrl) => {
                 <strong>Need help?</strong> Visit our help center or contact support at support@yourapp.com
               </p>
               <p style="font-size: 11px; color: #ccc; margin: 15px 0 0 0; text-align: center;">
-                This is an automated message from Your App Name. Please do not reply to this email.
+                This is an automated message from WhatsERP. Please do not reply to this email.
               </p>
             </div>
             

@@ -10,6 +10,46 @@ const createError = require('http-errors');
 const sequelize = require('../sequelize');
 const { Op } = require('sequelize');
 const prepareQueryOptions = require('../utils/queryOptions');
+const nodemailer = require('nodemailer');
+
+async function sendOrderStatusEmail(user, order) {
+  // Setup transporter (reuse from authController)
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.NODEMAILER_USER,
+      pass: process.env.NODEMAILER_PASSWORD,
+    },
+    secure: true,
+    tls: { rejectUnauthorized: false }
+  });
+
+  const mailOptions = {
+    from: {
+      name: 'WhatsERP',
+      address: process.env.NODEMAILER_USER
+    },
+    to: user.email,
+    subject: `Order #${order.id} Status Update`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #fff; padding: 32px; border-radius: 8px;">
+        <h2 style="color: #333;">Order Status Update</h2>
+        <p>Hello ${user.name || user.email},</p>
+        <p>Your order <strong>#${order.id}</strong> status has been updated.</p>
+        <ul style="font-size: 16px;">
+          <li><strong>Status:</strong> ${order.status}</li>
+          <li><strong>Payment Status:</strong> ${order.paymentStatus}</li>
+          <li><strong>Amount:</strong> ${order.amount}</li>
+        </ul>
+        <p>Thank you for shopping with us!</p>
+        <hr style="margin: 32px 0;">
+        <p style="font-size: 12px; color: #888;">If you have any questions, contact support.</p>
+      </div>
+    `,
+    text: `Your order #${order.id} status has been updated.\nStatus: ${order.status}\nPayment Status: ${order.paymentStatus}\nAmount: ${order.amount}`
+  };
+  await transporter.sendMail(mailOptions);
+}
 
 exports.createOrder = async (req, res, next) => {
   const transaction = await sequelize.transaction();
@@ -308,7 +348,7 @@ exports.updateOrderStatus = async (req, res, next) => {
   const transaction = await sequelize.transaction();
   try {
     const { status, paymentStatus } = req.body;
-    const order = await Order.findByPk(req.params.id, { include: [OrderItem] });
+    const order = await Order.findByPk(req.params.id, { include: [OrderItem, User] });
     if (!order) {
       await transaction.rollback();
       return next(createError(404, 'Order not found'));
@@ -351,6 +391,14 @@ exports.updateOrderStatus = async (req, res, next) => {
     }
 
     await transaction.commit();
+    // Send email to user after commit
+    if (order.User) {
+      try {
+        await sendOrderStatusEmail(order.User, order);
+      } catch (emailErr) {
+        console.error('Failed to send order status email:', emailErr);
+      }
+    }
     res.json({
       status: 200,
       message: 'Order updated successfully',
