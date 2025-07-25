@@ -4,9 +4,10 @@ const productController = require('../controllers/productController');
 const authMiddleware = require('../middleware/authMiddleware');
 const requireRole = require('../middleware/roleMiddleware');
 
+router.get('/', productController.getProducts);
+
 router.use(authMiddleware);
 router.post('/', productController.createProduct);
-router.get('/', productController.getProducts);
 router.get('/:id', productController.getProductById);
 
 router.use(requireRole(['admin']));
