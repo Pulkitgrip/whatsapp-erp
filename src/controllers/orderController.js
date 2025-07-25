@@ -412,28 +412,41 @@ exports.updateOrderStatus = async (req, res, next) => {
 
 exports.getProductDemands = async (req, res, next) => {
   try {
-    const demands = await ProductDemand.findAll({
-      include: [
-        {
-          model: Product,
-          attributes: ['id', 'name', 'unitPrice']
-        },
-        {
-          model: User,
-          attributes: ['id', 'name', 'email', 'mobileNo']
-        },
-        {
-          model: Customer,
-          attributes: ['id', 'name', 'gstNo']
-        }
-      ],
-      order: [['createdAt', 'DESC']]
-    });
-
+    // Prepare query options for pagination, search, and sorting
+    const options = prepareQueryOptions(req.query, []);
+    options.include = [
+      {
+        model: Product,
+        attributes: ['id', 'name', 'unitPrice']
+      },
+      {
+        model: User,
+        attributes: ['id', 'name', 'email', 'mobileNo']
+      },
+      {
+        model: Customer,
+        attributes: ['id', 'name', 'gstNo']
+      }
+    ];
+    if (!options.order) {
+      options.order = [['createdAt', 'DESC']];
+    }
+    // Get total count for all demands (without filters)
+    const totalCount = await ProductDemand.count();
+    // Get filtered count and results
+    const { count, rows: demands } = await ProductDemand.findAndCountAll(options);
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
     res.json({
       status: 200,
       message: 'Product demands fetched successfully',
-      data: { demands }
+      data: {
+        count,
+        totalCount,
+        page,
+        limit,
+        demands
+      }
     });
   } catch (err) {
     next(err);

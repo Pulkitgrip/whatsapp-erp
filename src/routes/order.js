@@ -4,6 +4,10 @@ const orderController = require('../controllers/orderController');
 const auth = require('../middleware/authMiddleware');
 const roleCheck = require('../middleware/roleMiddleware');
 
+// Get product demands (admin only)
+router.get('/demands/list', auth, roleCheck(['admin']), orderController.getProductDemands);
+
+
 // Create new order
 router.post('/', auth, orderController.createOrder);
 
@@ -16,7 +20,5 @@ router.get('/:id', auth, orderController.getOrderById);
 // Update order status (admin only)
 router.patch('/:id', auth, roleCheck(['admin', 'sales']), orderController.updateOrderStatus);
 
-// Get product demands (admin only)
-router.get('/demands/list', auth, roleCheck(['admin']), orderController.getProductDemands);
 
 module.exports = router; 
