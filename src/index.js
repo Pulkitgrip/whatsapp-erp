@@ -14,18 +14,32 @@ if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
-// CORS configuration
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'https://your-frontend-domain.com' // Replace with your actual frontend domain
-  ],
+// CORS configuration - allow all origins
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'https://erp-whatsapp.vercel.app',
+      'http://localhost:3000',
+      'http://localhost:3001'
+    ];
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Allow all origins for now
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  optionsSuccessStatus: 200
+};
 
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -84,30 +98,30 @@ app.get('/api/admin/cleanup-stats', require('./middleware/authMiddleware'), asyn
 // Root endpoint with API documentation
 app.get('/', (req, res) => {
   res.json({
-    message: 'WhatsApp ERP API Server',
-    version: '2.0.0',
-    features: [
-      'Multi-user WhatsApp connections',
-      'Persistent chat storage',
-      'Product catalog management',
-      'Order processing via WhatsApp',
-      'User authentication and authorization',
-      'Automatic session cleanup and management'
-    ],
-    endpoints: {
-      auth: '/api/auth/login, /api/auth/signup, /api/auth/profile',
-      products: '/api/products (GET, POST)',
-      categories: '/api/categories (GET, POST)',
-      whatsapp: {
-        connection: '/api/whatsapp/connect, /api/whatsapp/disconnect, /api/whatsapp/status',
-        messaging: '/api/whatsapp/send-message, /api/whatsapp/send-catalog',
-        conversations: '/api/whatsapp/conversations, /api/whatsapp/conversations/messages/:conversationId',
-        contacts: '/api/whatsapp/contacts, /api/whatsapp/contact/add',
-        qr: '/api/whatsapp/qr'
+    success: true,
+    data: {
+      name: "WhatsApp Bot API",
+      version: "1.0.0",
+      description: "API for WhatsApp automation using Baileys SDK",
+      endpoints: {
+        "GET /health": "Health check",
+        "GET /api/whatsapp/status": "Get WhatsApp connection status",
+        "POST /api/whatsapp/connect": "Connect to WhatsApp (requires API key)",
+        "POST /api/whatsapp/disconnect": "Disconnect from WhatsApp (requires API key)",
+        "GET /api/whatsapp/qr": "Get QR code for connection (Server-Sent Events)",
+        "POST /api/whatsapp/send-message": "Send a message (requires API key)",
+        "POST /api/whatsapp/send-order": "Send order details (requires API key)",
+        "GET /api/erp/products": "Get products (ERP)",
+        "POST /api/erp/orders": "Create order (ERP)",
+        "GET /api/erp/analytics": "Get business analytics (ERP)"
       },
-      admin: '/api/admin/cleanup-stats'
+      authentication: {
+        type: "API Key",
+        header: "x-api-key or Authorization: Bearer <token>",
+        note: "API key authentication is required for most endpoints"
+      }
     },
-    documentation: 'Visit /health for service status'
+    timestamp: Date.now()
   });
 });
 
