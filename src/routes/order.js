@@ -5,7 +5,9 @@ const auth = require('../middleware/authMiddleware');
 const roleCheck = require('../middleware/roleMiddleware');
 
 // Get product demands (admin only)
-router.get('/demands/list', auth, roleCheck(['admin']), orderController.getProductDemands);
+router.get('/demands/list', auth, roleCheck(['admin', 'sales']), orderController.getProductDemands);
+// Delete order item
+router.delete('/items/:id', auth, roleCheck(['admin', 'sales']), orderController.deleteOrderItem);
 
 
 // Create new order
@@ -19,6 +21,7 @@ router.get('/:id', auth, orderController.getOrderById);
 
 // Update order status (admin only)
 router.patch('/:id', auth, roleCheck(['admin', 'sales']), orderController.updateOrderStatus);
+
 
 
 module.exports = router; 

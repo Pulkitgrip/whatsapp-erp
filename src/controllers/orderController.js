@@ -435,6 +435,63 @@ exports.updateOrderStatus = async (req, res, next) => {
   }
 };
 
+exports.deleteOrderItem = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const orderItemId = req.params.id;
+    const orderItem = await OrderItem.findByPk(orderItemId, { 
+      include: [Order, Stock],
+      transaction 
+    });
+    
+    if (!orderItem) {
+      await transaction.rollback();
+      return next(createError(404, 'Order item not found'));
+    }
+
+    // Restore stock quantities
+    const stock = await Stock.findByPk(orderItem.StockId, { transaction });
+    if (stock) {
+      // Move reserved quantity back to available
+      stock.reservedQnt = Math.max(0, stock.reservedQnt - orderItem.quantity);
+      stock.availableQnt += orderItem.quantity;
+      await stock.save({ transaction });
+    }
+
+    // Delete the order item
+    await orderItem.destroy({ transaction });
+
+    // Recalculate order total
+    const remainingItems = await OrderItem.findAll({
+      where: { OrderId: orderItem.OrderId },
+      transaction
+    });
+    
+    const newTotal = remainingItems.reduce((sum, item) => sum + item.totalPrice, 0);
+    
+    // Update order amount
+    const order = await Order.findByPk(orderItem.OrderId, { transaction });
+    if (order) {
+      order.amount = newTotal;
+      await order.save({ transaction });
+    }
+
+    await transaction.commit();
+
+    res.json({
+      status: 200,
+      message: 'Order item deleted successfully',
+      data: { 
+        deletedItem: orderItem,
+        newOrderTotal: newTotal
+      }
+    });
+  } catch (err) {
+    await transaction.rollback();
+    next(err);
+  }
+};
+
 exports.getProductDemands = async (req, res, next) => {
   try {
     // Prepare query options for pagination, search, and sorting

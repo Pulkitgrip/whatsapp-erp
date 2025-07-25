@@ -95,6 +95,7 @@ exports.createCustomer = async (req, res, next) => {
             name: user.name,
             email: user.email,
             mobileNo: user.mobileNo,
+            location: user.location,
             role: 'user' // Default role
           });
         }
