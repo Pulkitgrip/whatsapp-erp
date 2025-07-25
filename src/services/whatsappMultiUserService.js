@@ -37,59 +37,23 @@ class MultiUserWhatsAppService {
     this.reconnectInterval = parseInt(process.env.RECONNECT_INTERVAL) || 5000;
   }
 
-  // Database-based auth state for Vercel compatibility
+  // Temporary file-based auth state (will switch to database later)
   async makeDatabaseAuthState(userId) {
-    const session = await WhatsAppSession.findOne({ where: { userId } });
+    const { useMultiFileAuthState } = require('@whiskeysockets/baileys');
+    const fs = require('fs');
+    const path = require('path');
     
-    let authData = {
-      creds: null,
-      keys: {}
-    };
-
-    if (session && session.authData) {
-      try {
-        authData = JSON.parse(session.authData);
-      } catch (error) {
-        logger.error(`Failed to parse auth data for user ${userId}:`, error);
-      }
+    // Create auth directory if it doesn't exist
+    const authDir = path.join(process.cwd(), 'auth_sessions', `user_${userId}`);
+    if (!fs.existsSync(authDir)) {
+      fs.mkdirSync(authDir, { recursive: true });
     }
-
-    const saveCreds = async () => {
-      try {
-        const updatedSession = await WhatsAppSession.findOne({ where: { userId } });
-        if (updatedSession) {
-          await updatedSession.update({
-            authData: JSON.stringify(authData)
-          });
-        } else {
-          await WhatsAppSession.create({
-            userId,
-            authData: JSON.stringify(authData)
-          });
-        }
-        logger.info(`Auth state saved for user ${userId}`);
-      } catch (error) {
-        logger.error(`Failed to save auth state for user ${userId}:`, error);
-      }
-    };
-
-    const state = {
-      creds: authData.creds,
-      keys: makeCacheableSignalKeyStore(authData.keys || {}, pino({ level: 'silent' }))
-    };
-
-    // Override the key store methods to save to database
-    const originalSet = state.keys.set;
-    state.keys.set = async (key, value) => {
-      authData.keys[key] = value;
-      await originalSet.call(state.keys, key, value);
-    };
-
-    const originalGet = state.keys.get;
-    state.keys.get = async (key) => {
-      return await originalGet.call(state.keys, key);
-    };
-
+    
+    logger.info(`Using file-based auth state for user ${userId} at ${authDir}`);
+    
+    // Use built-in file-based auth state
+    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    
     return { state, saveCreds };
   }
 
@@ -110,7 +74,8 @@ class MultiUserWhatsAppService {
         userId
       },
       reconnectAttempts: 0,
-      isConnecting: true
+      isConnecting: true,
+      restartAttempts: 0
     };
 
     this.connections.set(userId, connectionData);
@@ -118,30 +83,66 @@ class MultiUserWhatsAppService {
     try {
       logger.info(`Initializing WhatsApp connection for user ${userId}...`);
       
+      // Clear any existing session data that might be corrupted
+      await this.updateSessionStatus(userId, {
+        isConnected: false,
+        connectionState: 'connecting',
+        qrCode: null
+      });
+      
       const { state, saveCreds } = await this.makeDatabaseAuthState(userId);
       const { version } = await fetchLatestBaileysVersion();
 
+      logger.info(`Creating WhatsApp socket for user ${userId} with version ${version}`);
+
       connectionData.sock = makeWASocket({
         version,
-        auth: state,
-        browser: [`WhatsApp ERP Bot - User ${userId}`, 'Chrome', '10.0'],
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys) // Remove pino logger like in working example
+        },
+        // Use exact browser config from working example
+        browser: ['WhatsApp Bot API', 'Chrome', '10.0'],
         syncFullHistory: false,
-        markOnlineOnConnect: true,
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
-        retryRequestDelayMs: 5000,
+        markOnlineOnConnect: true, // Set to true like working example
         logger: pino({ level: 'silent' }),
         shouldIgnoreJid: jid => !jid.includes('@s.whatsapp.net'),
         getMessage: async () => {
-          return { conversation: 'hello' };
-        }
+          return {
+            conversation: 'hello' // Match working example
+          };
+        },
+        printQRInTerminal: false,
+        generateHighQualityLinkPreview: true,
+        // Use working example timeouts
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        // Better auth handling like working example
+        fireInitQueries: true,
+        emitOwnEvents: false,
+        // Add patchMessageBeforeSending from working example
+        patchMessageBeforeSending: (message) => {
+          return message;
+        },
+        // Add error handling options
+        retryRequestDelayMs: 1000,
+        maxMsgRetryCount: 5
       });
 
+      logger.info(`WhatsApp socket created successfully for user ${userId}`);
       await this.setupEventHandlers(userId, saveCreds);
       
       return connectionData.connectionStatus;
     } catch (error) {
       logger.error(`Failed to initialize WhatsApp connection for user ${userId}:`, error);
+      
+      // Update session status to reflect error
+      await this.updateSessionStatus(userId, {
+        isConnected: false,
+        connectionState: 'error',
+        qrCode: null
+      });
+      
       this.connections.delete(userId);
       throw new Error(`Connection initialization failed: ${error.message}`);
     } finally {
@@ -157,13 +158,31 @@ class MultiUserWhatsAppService {
 
     const sock = connectionData.sock;
 
-    // Handle connection updates
+    // Handle connection updates  
     sock.ev.on("connection.update", async (update) => {
-      const { connection, lastDisconnect, qr } = update;
+      const { connection, lastDisconnect, qr, isNewLogin, receivedPendingNotifications } = update;
+      
+      logger.info(`Connection update for user ${userId}:`, { 
+        connection, 
+        qr: !!qr,
+        isNewLogin,
+        receivedPendingNotifications,
+        lastDisconnect: lastDisconnect?.error?.message,
+        statusCode: (lastDisconnect?.error)?.output?.statusCode
+      });
 
+      // Handle QR code - ensure it's fresh and not reused
       if (qr) {
+        // Clear any existing QR code first
+        connectionData.connectionStatus.qrCode = null;
+        await this.updateSessionStatus(userId, {
+          qrCode: null,
+          connectionState: 'generating_qr'
+        });
+        
+        // Set new QR code
         connectionData.connectionStatus.qrCode = qr;
-        logger.info(`QR Code generated for user ${userId}`);
+        logger.info(`New QR Code generated for user ${userId}`);
         
         // Save QR code to database
         await this.updateSessionStatus(userId, {
@@ -178,14 +197,70 @@ class MultiUserWhatsAppService {
         }
       }
 
+      // Handle new login - this happens after QR scan but before connection opens
+      if (isNewLogin && connection === undefined) {
+        logger.info(`New login detected for user ${userId}, waiting for connection to open...`);
+        connectionData.connectionStatus.connectionState = 'authenticating';
+        
+        await this.updateSessionStatus(userId, {
+          connectionState: 'authenticating',
+          qrCode: null
+        });
+        return; // Wait for the next update with connection: "open"
+      }
+
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut && 
-                              statusCode !== DisconnectReason.badSession;
+        const errorMessage = lastDisconnect?.error?.message || 'Unknown error';
+        
+        logger.info(`Connection closed for user ${userId}: statusCode=${statusCode}, error=${errorMessage}`);
+        
+        // Simplified disconnect handling like working example
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        
+        // Handle restart required after QR scan (this is normal behavior)
+        if (statusCode === DisconnectReason.restartRequired) {
+          logger.info(`Restart required for user ${userId} after QR scan - this is normal`);
+          
+          // Clear the old socket properly
+          connectionData.sock = null;
+          
+          // Don't increment restart attempts too much as this is expected
+          if (connectionData.restartAttempts < 3) {
+            connectionData.restartAttempts++;
+            connectionData.connectionStatus.connected = false;
+            connectionData.connectionStatus.connectionState = 'restarting';
+            
+            await this.updateSessionStatus(userId, {
+              isConnected: false,
+              connectionState: 'restarting',
+              qrCode: null
+            });
+            
+            logger.info(`Creating new socket for user ${userId} after restart (attempt ${connectionData.restartAttempts})`);
+            
+            // Wait a moment for WhatsApp to process
+            setTimeout(async () => {
+              try {
+                // Create new socket with updated auth state
+                await this.createNewSocketAfterRestart(userId, saveCreds);
+              } catch (error) {
+                logger.error(`Failed to create new socket after restart for user ${userId}:`, error);
+                // Try normal reconnect as fallback
+                this.connectUser(userId).catch(err => {
+                  logger.error(`Fallback reconnect failed for user ${userId}:`, err);
+                });
+              }
+            }, 3000);
+            return;
+          } else {
+            logger.warn(`Too many restart attempts for user ${userId}, falling back to normal reconnect`);
+          }
+        }
 
         connectionData.connectionStatus.connected = false;
         connectionData.connectionStatus.connectionState = 'close';
-        connectionData.connectionStatus.lastDisconnect = lastDisconnect?.error?.message;
+        connectionData.connectionStatus.lastDisconnect = errorMessage;
 
         await this.updateSessionStatus(userId, {
           isConnected: false,
@@ -193,7 +268,7 @@ class MultiUserWhatsAppService {
           qrCode: null
         });
 
-        logger.warn(`Connection closed for user ${userId}: ${lastDisconnect?.error?.message}, reconnecting: ${shouldReconnect}`);
+        logger.warn(`Connection closed for user ${userId}: ${errorMessage}, reconnecting: ${shouldReconnect}`);
 
         if (shouldReconnect && connectionData.reconnectAttempts < this.maxReconnectAttempts) {
           connectionData.reconnectAttempts++;
@@ -204,6 +279,8 @@ class MultiUserWhatsAppService {
               logger.error(`Reconnection failed for user ${userId}:`, error);
             });
           }, this.reconnectInterval);
+        } else if (shouldReconnect && connectionData.reconnectAttempts >= this.maxReconnectAttempts) {
+          logger.error(`Max reconnection attempts reached for user ${userId}`);
         } else if (!shouldReconnect) {
           await this.clearUserAuthState(userId);
         }
@@ -212,6 +289,7 @@ class MultiUserWhatsAppService {
         connectionData.connectionStatus.connectionState = 'open';
         connectionData.connectionStatus.qrCode = undefined;
         connectionData.reconnectAttempts = 0;
+        connectionData.restartAttempts = 0;
         
         await this.updateSessionStatus(userId, {
           isConnected: true,
@@ -221,12 +299,42 @@ class MultiUserWhatsAppService {
         });
         
         logger.info(`WhatsApp connection established successfully for user ${userId}`);
+        
+        // If this was a new login, log it
+        if (isNewLogin) {
+          logger.info(`New login completed for user ${userId}`);
+        }
+      } else if (connection === "connecting") {
+        logger.info(`WhatsApp connecting for user ${userId}`);
+        connectionData.connectionStatus.connectionState = 'connecting';
+        
+        await this.updateSessionStatus(userId, {
+          connectionState: 'connecting'
+        });
+      } else if (connection === undefined && !isNewLogin) {
+        // Handle undefined connection state without isNewLogin
+        logger.info(`Connection state undefined for user ${userId}, waiting for proper state...`);
+      } else {
+        // Log any other connection states we might be missing
+        logger.warn(`Unhandled connection state for user ${userId}: connection=${connection}, isNewLogin=${isNewLogin}`);
       }
     });
 
-    // Handle credential updates
+    // Handle credential updates with better error handling
     sock.ev.on("creds.update", async () => {
-      await saveCreds();
+      try {
+        await saveCreds();
+        logger.debug(`Credentials updated and saved for user ${userId}`);
+      } catch (error) {
+        logger.error(`Failed to save credentials for user ${userId}:`, error);
+      }
+    });
+
+    // Add socket error handling
+    sock.ev.on('connection.update', (update) => {
+      if (update.lastDisconnect?.error) {
+        logger.error(`Socket error for user ${userId}:`, update.lastDisconnect.error);
+      }
     });
 
     // Handle messages
@@ -248,15 +356,17 @@ class MultiUserWhatsAppService {
       
       logger.info(`Received message from ${phoneNumber} to user ${ownerId}: ${messageContent}`);
 
-      // Check if sender exists in our database
-      const sender = await User.findOne({ 
+      // Check if sender exists in our database by phone number
+      let sender = await User.findOne({ 
         where: { phoneNumber: phoneNumber } 
       });
 
       if (!sender) {
-        logger.info(`Message from ${phoneNumber} ignored - sender not in database`);
-        return;
+        logger.info(`Message from ${phoneNumber} ignored - sender not in database (not a registered user)`);
+        return; // Only process messages from users in our database
       }
+
+      logger.info(`Processing message from registered user ${sender.name || sender.email} (${phoneNumber})`);
 
       // Save incoming message
       await this.saveIncomingMessage(ownerId, sender.id, msg, phoneNumber, messageContent);
@@ -636,6 +746,24 @@ Example: ORDER Gaming Laptop:1`;
       this.connections.delete(userId);
       this.qrCodeCallbacks.delete(userId);
       
+      // Clear auth files from filesystem
+      const fs = require('fs');
+      const path = require('path');
+      const authDir = path.join(process.cwd(), 'auth_sessions', `user_${userId}`);
+      
+      if (fs.existsSync(authDir)) {
+        try {
+          const files = fs.readdirSync(authDir);
+          for (const file of files) {
+            fs.unlinkSync(path.join(authDir, file));
+          }
+          fs.rmdirSync(authDir);
+          logger.info(`Cleared auth files for user ${userId}`);
+        } catch (error) {
+          logger.warn(`Error clearing auth files for user ${userId}:`, error);
+        }
+      }
+      
       // Clear from database
       const session = await WhatsAppSession.findOne({ where: { userId } });
       if (session) {
@@ -650,6 +778,96 @@ Example: ORDER Gaming Laptop:1`;
       logger.info(`Auth state cleared for user ${userId}`);
     } catch (error) {
       logger.error(`Error clearing auth state for user ${userId}:`, error);
+    }
+  }
+
+  async forceNewQRCode(userId) {
+    logger.info(`Forcing new QR code generation for user ${userId}`);
+    
+    // Clear any existing connection
+    if (this.connections.has(userId)) {
+      const connection = this.connections.get(userId);
+      if (connection.sock) {
+        try {
+          await connection.sock.logout();
+        } catch (error) {
+          logger.warn(`Error during logout for user ${userId}:`, error);
+        }
+      }
+    }
+    
+    // Clear auth state to force fresh QR
+    await this.clearUserAuthState(userId);
+    
+    // Wait a moment before reconnecting
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Initiate fresh connection
+    return await this.connectUser(userId);
+  }
+
+  async createNewSocketAfterRestart(userId, oldSaveCreds) {
+    logger.info(`Creating new socket after restart for user ${userId}`);
+    
+    const connectionData = this.connections.get(userId);
+    if (!connectionData) {
+      throw new Error(`No connection data found for user ${userId}`);
+    }
+    
+    try {
+      // Get updated auth state
+      const { state, saveCreds } = await this.makeDatabaseAuthState(userId);
+      const { version } = await fetchLatestBaileysVersion();
+      
+      // Close old socket if it exists
+      if (connectionData.sock) {
+        try {
+          connectionData.sock.end();
+        } catch (error) {
+          logger.warn(`Error closing old socket for user ${userId}:`, error);
+        }
+      }
+      
+      // Create new socket with updated auth
+      connectionData.sock = makeWASocket({
+        version,
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys)
+        },
+        browser: ['WhatsApp Bot API', 'Chrome', '10.0'],
+        syncFullHistory: false,
+        markOnlineOnConnect: true,
+        logger: pino({ level: 'silent' }),
+        shouldIgnoreJid: jid => !jid.includes('@s.whatsapp.net'),
+        getMessage: async () => {
+          return {
+            conversation: 'hello'
+          };
+        },
+        printQRInTerminal: false,
+        generateHighQualityLinkPreview: true,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        fireInitQueries: true,
+        emitOwnEvents: false,
+        patchMessageBeforeSending: (message) => {
+          return message;
+        },
+        // Add error handling options
+        retryRequestDelayMs: 1000,
+        maxMsgRetryCount: 5
+      });
+      
+      logger.info(`New socket created for user ${userId} after restart`);
+      
+      // Setup event handlers for new socket
+      await this.setupEventHandlers(userId, saveCreds);
+      
+      return true;
+    } catch (error) {
+      logger.error(`Failed to create new socket after restart for user ${userId}:`, error);
+      throw error;
     }
   }
 
@@ -685,4 +903,4 @@ Example: ORDER Gaming Laptop:1`;
 
 // Export singleton instance
 const multiUserWhatsAppService = new MultiUserWhatsAppService();
-module.exports = multiUserWhatsAppService; 
+module.exports = multiUserWhatsAppService;

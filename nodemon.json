@@ -1,0 +1,13 @@
+{
+  "watch": ["src"],
+  "ext": "js,json",
+  "ignore": [
+    "auth_sessions/**",
+    "node_modules/**",
+    "database.sqlite",
+    "*.log",
+    "test-whatsapp-connection.js",
+    "baileys_store.json"
+  ],
+  "delay": 1000
+} 
