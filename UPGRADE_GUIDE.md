@@ -178,7 +178,7 @@ await fetch('/api/whatsapp/contact/add', {
     'Content-Type': 'application/json'
   },
   body: JSON.stringify({
-    phoneNumber: '+1234567890',
+    mobileNo: '+1234567890',
     name: 'Customer Name'
   })
 });

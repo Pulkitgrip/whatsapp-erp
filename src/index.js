@@ -5,6 +5,7 @@ const errorHandler = require('./middleware/errorHandler');
 const createError = require('http-errors');
 const fs = require('fs');
 const path = require('path');
+const indexRoutes = require('./routes/index');
 
 const app = express();
 
@@ -44,7 +45,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Import routes
-const authRoutes = require('./routes/auth');
+const authRoutes = require('./routes/auth'); // Use our fixed auth router
 const productRoutes = require('./routes/product');
 const categoryRoutes = require('./routes/category');
 const whatsappRoutes = require('./routes/whatsapp');
@@ -52,10 +53,11 @@ const whatsappRoutes = require('./routes/whatsapp');
 // Import services
 const sessionCleanupService = require('./services/sessionCleanupService');
 
-// Use routes
-app.use('/api/auth', authRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/categories', categoryRoutes);
+// Register routes directly
+// app.use('/api/auth', authRoutes);
+// app.use('/api/products', productRoutes);
+// app.use('/api/categories', categoryRoutes);
+app.use('/api', indexRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 
 // Health check endpoint
@@ -128,16 +130,9 @@ app.get('/', (req, res) => {
 // 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({
-    status: 404,
-    message: 'Endpoint not found',
-    availableEndpoints: [
-      '/api/auth/*',
-      '/api/products',
-      '/api/categories',
-      '/api/whatsapp/*',
-      '/api/admin/*',
-      '/health'
-    ]
+    success: false,
+    error: `Route ${req.originalUrl} not found`,
+    timestamp: Date.now()
   });
 });
 
@@ -179,7 +174,7 @@ initializeDatabase().then(() => {
 ==========================================
 📡 Server: http://localhost:${PORT}
 📖 API Documentation: http://localhost:${PORT}/
-🏥 Health Check: http://localhost:${PORT}/health
+�� Health Check: http://localhost:${PORT}/health
 
 📝 Multi-User WhatsApp Features:
 • Each user can connect their own WhatsApp

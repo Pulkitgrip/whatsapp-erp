@@ -15,7 +15,7 @@ async function setupDatabase() {
     console.log('✅ Database connection established');
     
     // Sync models
-    await sequelize.sync({ force: false, alter: fasle });
+    await sequelize.sync({ force: false, alter: false });
     console.log('✅ Database models synchronized');
     
     // Create categories

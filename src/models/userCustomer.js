@@ -26,4 +26,4 @@ const UserCustomer = sequelize.define('UserCustomer', {
 User.belongsToMany(Customer, { through: UserCustomer, foreignKey: 'userId' });
 Customer.belongsToMany(User, { through: UserCustomer, foreignKey: 'customerId' });
 
-module.exports = UserCustomer; 
+module.exports = UserCustomer;

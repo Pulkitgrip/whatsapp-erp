@@ -78,36 +78,154 @@ router.get('/status', authMiddleware, async (req, res) => {
 });
 
 /**
- * GET /whatsapp/qr
- * Get QR code for user's connection (Server-Sent Events)
+ * GET /whatsapp/qr/image
+ * Get QR code as image for user's connection
  */
-router.get('/qr', authMiddleware, (req, res) => {
-  const userId = req.user.id;
-  
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Cache-Control'
-  });
-
-  // Get current status and send QR if available
-  multiUserWhatsAppService.getUserConnectionStatus(userId).then(status => {
-    if (status.qrCode) {
-      res.write(`data: ${JSON.stringify({ qrCode: status.qrCode })}\n\n`);
+router.get('/qr/image', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const forceNew = req.query.force === 'true';
+    
+    let status = await multiUserWhatsAppService.getUserConnectionStatus(userId);
+    
+    // If already connected
+    if (status.connected) {
+      return res.status(200).json({
+        status: 200,
+        message: 'WhatsApp is already connected',
+        data: {
+          connected: true,
+          connectionState: status.connectionState
+        }
+      });
     }
-  });
+    
+    // Force new QR if requested or if QR is older than 2 minutes
+    if (forceNew || !status.qrCode) {
+      await multiUserWhatsAppService.forceNewQRCode(userId);
+      // Wait a bit for QR generation
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      status = await multiUserWhatsAppService.getUserConnectionStatus(userId);
+      
+      if (!status.qrCode) {
+        return res.status(202).json({
+          status: 202,
+          message: 'QR code not ready yet. Please try again in a few seconds.',
+          data: null
+        });
+      }
+    }
+    
+    // Generate QR code image
+    const QRCode = require('qrcode');
+    const qrImageBuffer = await QRCode.toBuffer(status.qrCode, {
+      type: 'png',
+      width: 256,
+      margin: 2
+    });
+    
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Length', qrImageBuffer.length);
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.send(qrImageBuffer);
+    
+  } catch (error) {
+    console.error(`Error generating QR image for user ${req.user?.id}:`, error);
+    res.status(500).json({
+      status: 500,
+      message: 'Failed to generate QR code image',
+      error: error.message
+    });
+  }
+});
 
-  // Set callback for new QR codes
-  multiUserWhatsAppService.setQRCodeCallback(userId, (qr) => {
-    res.write(`data: ${JSON.stringify({ qrCode: qr })}\n\n`);
-  });
+/**
+ * GET /whatsapp/qr
+ * Get QR code for user's connection
+ */
+router.get('/qr', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const forceNew = req.query.force === 'true';
+  
+  console.log('>>>>>>>>>>>>>>>>>>>>>>>>>>> qr code');
 
-  // Clean up on client disconnect
-  req.on('close', () => {
-    multiUserWhatsAppService.setQRCodeCallback(userId, () => {});
-  });
+  try {
+    // Get current connection status
+    let status = await multiUserWhatsAppService.getUserConnectionStatus(userId);
+    
+    // If user is already connected
+    if (status.connected) {
+      return res.status(200).json({
+        status: 200,
+        message: 'WhatsApp is already connected',
+        data: {
+          connected: true,
+          connectionState: status.connectionState
+        }
+      });
+    }
+    
+    // If force new requested or no QR available, generate fresh QR
+    if (forceNew || !status.qrCode) {
+      console.log(`Generating fresh QR code for user ${userId}`);
+      await multiUserWhatsAppService.forceNewQRCode(userId);
+      
+      // Wait for QR code generation with multiple attempts
+      const maxAttempts = 15;
+      const delayBetweenAttempts = 1000; // 1 second
+      
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts));
+        
+        const updatedStatus = await multiUserWhatsAppService.getUserConnectionStatus(userId);
+        
+        if (updatedStatus.qrCode) {
+          return res.status(200).json({
+            status: 200,
+            message: 'QR code generated successfully',
+            data: { qrCode: updatedStatus.qrCode }
+          });
+        }
+        
+        if (updatedStatus.connected) {
+          return res.status(200).json({
+            status: 200,
+            message: 'WhatsApp is already connected',
+            data: {
+              connected: true,
+              connectionState: updatedStatus.connectionState
+            }
+          });
+        }
+        
+        console.log(`QR code generation attempt ${attempt}/${maxAttempts} for user ${userId}`);
+      }
+      
+      // If we reach here, QR code generation failed
+      return res.status(202).json({
+        status: 202,
+        message: 'QR code generation is taking longer than expected. Please try again with ?force=true',
+        data: { timeout: true }
+      });
+    }
+    
+    // Return existing QR code
+    return res.status(200).json({
+      status: 200,
+      message: 'QR code retrieved successfully',
+      data: { qrCode: status.qrCode }
+    });
+    
+  } catch (error) {
+    console.error(`Error getting QR code for user ${userId}:`, error);
+    res.status(500).json({
+      status: 500,
+      message: 'Failed to get QR code',
+      error: error.message
+    });
+  }
 });
 
 /**
@@ -218,7 +336,7 @@ router.get('/conversations', authMiddleware, async (req, res) => {
         order: [['createdAt', 'DESC']],
         include: [{
           model: User,
-          attributes: ['id', 'name', 'phoneNumber']
+          attributes: ['id', 'name', 'mobileNo']
         }]
       }],
       order: [['updatedAt', 'DESC']]
@@ -269,7 +387,7 @@ router.get('/conversations/messages/:conversationId', authMiddleware, async (req
       where: { conversationId: conversationId },
       include: [{
         model: User,
-        attributes: ['id', 'name', 'phoneNumber']
+        attributes: ['id', 'name', 'mobileNo']
       }],
       order: [['createdAt', 'ASC']]
     });
@@ -287,6 +405,72 @@ router.get('/conversations/messages/:conversationId', authMiddleware, async (req
     res.status(500).json({
       status: 500,
       message: 'Failed to get messages',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /whatsapp/debug/recent-messages
+ * Get recent messages for debugging (admin only)
+ */
+router.get('/debug/recent-messages', authMiddleware, async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        status: 403,
+        message: 'Access denied. Admin role required.',
+        data: null
+      });
+    }
+
+    const { Conversation, Message } = require('../models/whatsappModels');
+    
+    // Get recent messages with sender info
+    const recentMessages = await Message.findAll({
+      include: [
+        {
+          model: User,
+          attributes: ['id', 'name', 'mobileNo', 'email']
+        },
+        {
+          model: Conversation,
+          attributes: ['id', 'whatsappChatId', 'ownerId']
+        }
+      ],
+      order: [['createdAt', 'DESC']],
+      limit: 20
+    });
+
+    // Get recent conversations
+    const recentConversations = await Conversation.findAll({
+      include: [
+        {
+          model: User,
+          attributes: ['id', 'name', 'email'],
+          foreignKey: 'ownerId'
+        }
+      ],
+      order: [['updatedAt', 'DESC']],
+      limit: 10
+    });
+
+    res.json({
+      status: 200,
+      message: 'Debug data retrieved successfully',
+      data: {
+        recentMessages,
+        recentConversations,
+        messageCount: await Message.count(),
+        conversationCount: await Conversation.count()
+      }
+    });
+  } catch (error) {
+    console.error(`Error getting debug data:`, error);
+    res.status(500).json({
+      status: 500,
+      message: 'Failed to get debug data',
       error: error.message
     });
   }
@@ -312,7 +496,7 @@ router.get('/sessions/active', authMiddleware, async (req, res) => {
       where: { isConnected: true },
       include: [{
         model: User,
-        attributes: ['id', 'name', 'email', 'phoneNumber']
+        attributes: ['id', 'name', 'email', 'mobileNo']
       }]
     });
 
@@ -337,12 +521,13 @@ router.get('/sessions/active', authMiddleware, async (req, res) => {
 /**
  * POST /whatsapp/contact/add
  * Add a contact to user's contact list (for storing messages)
+ * Can create new user or update existing user with phone number
  */
 router.post('/contact/add', authMiddleware, async (req, res) => {
   try {
-    const { phoneNumber, name } = req.body;
+    const { mobileNo, name, email } = req.body;
 
-    if (!phoneNumber) {
+    if (!mobileNo) {
       return res.status(400).json({
         status: 400,
         message: 'Phone number is required',
@@ -350,28 +535,91 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
       });
     }
 
-    // Check if user already exists
-    let contact = await User.findOne({ where: { phoneNumber } });
-    
-    if (!contact) {
-      // Create new contact user
-      contact = await User.create({
-        phoneNumber,
-        name: name || null,
-        role: 'customer'
-      });
-    } else if (name && !contact.name) {
-      // Update name if provided and not set
-      await contact.update({ name });
+    // Format phone number (remove + and spaces)
+    const formattedPhone = mobileNo.replace(/[\s+\-()]/g, '');
+
+    let contact;
+
+    // If email is provided, try to update existing user
+    if (email) {
+      contact = await User.findOne({ where: { email } });
+      if (contact) {
+        // Update existing user with phone number
+        await contact.update({ 
+          mobileNo: formattedPhone,
+          name: name || contact.name 
+        });
+        
+        return res.json({
+          status: 200,
+          message: 'Existing user updated with phone number successfully',
+          data: {
+            id: contact.id,
+            email: contact.email,
+            name: contact.name,
+            mobileNo: contact.mobileNo,
+            role: contact.role,
+            action: 'updated'
+          }
+        });
+      }
     }
+
+    // Check if phone number already exists
+    contact = await User.findOne({ where: { mobileNo: formattedPhone } });
+    
+    if (contact) {
+      // Update name if provided and not set
+      if (name && !contact.name) {
+        await contact.update({ name });
+      }
+      
+      return res.json({
+        status: 200,
+        message: 'Contact already exists',
+        data: {
+          id: contact.id,
+          email: contact.email,
+          name: contact.name,
+          mobileNo: contact.mobileNo,
+          role: contact.role,
+          action: 'existing'
+        }
+      });
+    }
+
+    // Create new contact user
+    contact = await User.create({
+      email: email || `${formattedPhone}@whatsapp.local`,
+      mobileNo: formattedPhone,
+      name: name || null,
+      role: 'customer',
+      password: 'whatsapp_contact' // Placeholder password for WhatsApp contacts
+    });
 
     res.json({
       status: 200,
       message: 'Contact added successfully',
-      data: contact
+      data: {
+        id: contact.id,
+        email: contact.email,
+        name: contact.name,
+        mobileNo: contact.mobileNo,
+        role: contact.role,
+        action: 'created'
+      }
     });
   } catch (error) {
     console.error(`Error adding contact for user ${req.user?.id}:`, error);
+    
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(400).json({
+        status: 400,
+        message: 'Phone number or email already exists',
+        error: 'Duplicate entry'
+      });
+    }
+    
     res.status(500).json({
       status: 500,
       message: 'Failed to add contact',
@@ -382,16 +630,15 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
 
 /**
  * GET /whatsapp/contacts
- * Get user's contact list
+ * Get user's contact list (users with phone numbers)
  */
 router.get('/contacts', authMiddleware, async (req, res) => {
   try {
     const contacts = await User.findAll({
       where: { 
-        role: 'customer',
-        phoneNumber: { [require('sequelize').Op.ne]: null }
+        mobileNo: { [require('sequelize').Op.ne]: null }
       },
-      attributes: ['id', 'name', 'phoneNumber', 'createdAt'],
+      attributes: ['id', 'name', 'email', 'mobileNo', 'role', 'createdAt'],
       order: [['name', 'ASC']]
     });
 

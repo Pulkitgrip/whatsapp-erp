@@ -126,7 +126,7 @@ The server will start at `http://localhost:5000`
    ```bash
    POST /api/whatsapp/contact/add
    {
-     "phoneNumber": "+1234567890",
+     "mobileNo": "+1234567890",
      "name": "Customer Name"
    }
    ```

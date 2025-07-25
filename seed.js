@@ -68,7 +68,7 @@ async function main() {
       password: hashedPassword,
       name: 'System Administrator',
       role: 'admin',
-      phoneNumber: '+1234567890'
+      mobileNo: '+1234567890'
     }
   })
 
