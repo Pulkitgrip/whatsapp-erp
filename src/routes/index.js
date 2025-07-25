@@ -6,6 +6,8 @@ const authRoutes = require('./auth');
 const productRoutes = require('./product');
 const categoryRoutes = require('./category');
 const whatsappRoutes = require('./whatsapp');
+const userRoutes = require('./user');
+const customerRoutes = require('./customer');
 
 // Health check for individual route groups
 router.get('/health', (req, res) => {
@@ -27,6 +29,8 @@ router.use('/auth', authRoutes);
 router.use('/products', productRoutes);
 router.use('/categories', categoryRoutes);
 router.use('/whatsapp', whatsappRoutes);
+router.use('/users', userRoutes);
+router.use('/customers', customerRoutes);
 
 // API documentation
 router.get('/', (req, res) => {

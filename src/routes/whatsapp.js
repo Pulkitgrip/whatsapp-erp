@@ -336,7 +336,7 @@ router.get('/conversations', authMiddleware, async (req, res) => {
         order: [['createdAt', 'DESC']],
         include: [{
           model: User,
-          attributes: ['id', 'name', 'phoneNumber']
+          attributes: ['id', 'name', 'mobileNo']
         }]
       }],
       order: [['updatedAt', 'DESC']]
@@ -387,7 +387,7 @@ router.get('/conversations/messages/:conversationId', authMiddleware, async (req
       where: { conversationId: conversationId },
       include: [{
         model: User,
-        attributes: ['id', 'name', 'phoneNumber']
+        attributes: ['id', 'name', 'mobileNo']
       }],
       order: [['createdAt', 'ASC']]
     });
@@ -432,7 +432,7 @@ router.get('/debug/recent-messages', authMiddleware, async (req, res) => {
       include: [
         {
           model: User,
-          attributes: ['id', 'name', 'phoneNumber', 'email']
+          attributes: ['id', 'name', 'mobileNo', 'email']
         },
         {
           model: Conversation,
@@ -496,7 +496,7 @@ router.get('/sessions/active', authMiddleware, async (req, res) => {
       where: { isConnected: true },
       include: [{
         model: User,
-        attributes: ['id', 'name', 'email', 'phoneNumber']
+        attributes: ['id', 'name', 'email', 'mobileNo']
       }]
     });
 
@@ -525,9 +525,9 @@ router.get('/sessions/active', authMiddleware, async (req, res) => {
  */
 router.post('/contact/add', authMiddleware, async (req, res) => {
   try {
-    const { phoneNumber, name, email } = req.body;
+    const { mobileNo, name, email } = req.body;
 
-    if (!phoneNumber) {
+    if (!mobileNo) {
       return res.status(400).json({
         status: 400,
         message: 'Phone number is required',
@@ -536,7 +536,7 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
     }
 
     // Format phone number (remove + and spaces)
-    const formattedPhone = phoneNumber.replace(/[\s+\-()]/g, '');
+    const formattedPhone = mobileNo.replace(/[\s+\-()]/g, '');
 
     let contact;
 
@@ -546,7 +546,7 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
       if (contact) {
         // Update existing user with phone number
         await contact.update({ 
-          phoneNumber: formattedPhone,
+          mobileNo: formattedPhone,
           name: name || contact.name 
         });
         
@@ -557,7 +557,7 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
             id: contact.id,
             email: contact.email,
             name: contact.name,
-            phoneNumber: contact.phoneNumber,
+            mobileNo: contact.mobileNo,
             role: contact.role,
             action: 'updated'
           }
@@ -566,7 +566,7 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
     }
 
     // Check if phone number already exists
-    contact = await User.findOne({ where: { phoneNumber: formattedPhone } });
+    contact = await User.findOne({ where: { mobileNo: formattedPhone } });
     
     if (contact) {
       // Update name if provided and not set
@@ -581,7 +581,7 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
           id: contact.id,
           email: contact.email,
           name: contact.name,
-          phoneNumber: contact.phoneNumber,
+          mobileNo: contact.mobileNo,
           role: contact.role,
           action: 'existing'
         }
@@ -591,7 +591,7 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
     // Create new contact user
     contact = await User.create({
       email: email || `${formattedPhone}@whatsapp.local`,
-      phoneNumber: formattedPhone,
+      mobileNo: formattedPhone,
       name: name || null,
       role: 'customer',
       password: 'whatsapp_contact' // Placeholder password for WhatsApp contacts
@@ -604,7 +604,7 @@ router.post('/contact/add', authMiddleware, async (req, res) => {
         id: contact.id,
         email: contact.email,
         name: contact.name,
-        phoneNumber: contact.phoneNumber,
+        mobileNo: contact.mobileNo,
         role: contact.role,
         action: 'created'
       }
@@ -636,9 +636,9 @@ router.get('/contacts', authMiddleware, async (req, res) => {
   try {
     const contacts = await User.findAll({
       where: { 
-        phoneNumber: { [require('sequelize').Op.ne]: null }
+        mobileNo: { [require('sequelize').Op.ne]: null }
       },
-      attributes: ['id', 'name', 'email', 'phoneNumber', 'role', 'createdAt'],
+      attributes: ['id', 'name', 'email', 'mobileNo', 'role', 'createdAt'],
       order: [['name', 'ASC']]
     });
 

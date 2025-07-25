@@ -176,19 +176,19 @@ class WhatsAppService {
 
   async handleIncomingMessage(msg) {
     try {
-      const phoneNumber = msg.key.remoteJid.replace('@s.whatsapp.net', '');
+      const mobileNo = msg.key.remoteJid.replace('@s.whatsapp.net', '');
       const messageContent = msg.message?.conversation || 
                            msg.message?.extendedTextMessage?.text || 
                            'Media message';
       
-      logger.info(`Received message from ${phoneNumber}: ${messageContent}`);
+      logger.info(`Received message from ${mobileNo}: ${messageContent}`);
 
       // Save incoming message
-      await this.saveIncomingMessage(msg, phoneNumber, messageContent);
+      await this.saveIncomingMessage(msg, mobileNo, messageContent);
 
       // Process bot response
       if (messageContent !== 'Media message') {
-        await this.processBotResponse(phoneNumber, messageContent, msg.key.remoteJid);
+        await this.processBotResponse(mobileNo, messageContent, msg.key.remoteJid);
       }
 
     } catch (error) {
@@ -196,13 +196,13 @@ class WhatsAppService {
     }
   }
 
-  async saveIncomingMessage(msg, phoneNumber, content) {
+  async saveIncomingMessage(msg, mobileNo, content) {
     try {
       // Get or create user
-      let user = await User.findOne({ where: { email: phoneNumber + '@whatsapp.local' } });
+      let user = await User.findOne({ where: { email: mobileNo + '@whatsapp.local' } });
       if (!user) {
         user = await User.create({
-          email: phoneNumber + '@whatsapp.local',
+          email: mobileNo + '@whatsapp.local',
           role: 'customer'
         });
       }
@@ -233,7 +233,7 @@ class WhatsAppService {
     }
   }
 
-  async processBotResponse(phoneNumber, messageContent, chatId) {
+  async processBotResponse(mobileNo, messageContent, chatId) {
     try {
       const lowerContent = messageContent.toLowerCase();
       let response = null;
@@ -252,9 +252,9 @@ class WhatsAppService {
       } else if (lowerContent.includes('catalog') || lowerContent.includes('products')) {
         response = await this.generateProductCatalog();
       } else if (lowerContent.includes('order')) {
-        response = await this.handleOrderRequest(phoneNumber, messageContent);
+        response = await this.handleOrderRequest(mobileNo, messageContent);
       } else if (lowerContent.includes('status') || lowerContent.includes('my order')) {
-        response = await this.getOrderStatus(phoneNumber);
+        response = await this.getOrderStatus(mobileNo);
       } else if (lowerContent.includes('hello') || lowerContent.includes('hi')) {
         response = '👋 Hello! Welcome to our store. Type "catalog" to see our products or "help" for assistance.';
       } else if (lowerContent.includes('help')) {
@@ -271,7 +271,7 @@ Example: ORDER Gaming Laptop:1`;
       }
 
       if (response) {
-        await this.sendTextMessage(phoneNumber + '@s.whatsapp.net', response);
+        await this.sendTextMessage(mobileNo + '@s.whatsapp.net', response);
       }
 
     } catch (error) {
@@ -311,7 +311,7 @@ Example: ORDER Gaming Laptop:1`;
     }
   }
 
-  async handleOrderRequest(phoneNumber, messageContent) {
+  async handleOrderRequest(mobileNo, messageContent) {
     try {
       const orderMatch = messageContent.match(/order\s+(.+)/i);
       if (!orderMatch) {
@@ -363,10 +363,10 @@ Example: ORDER Gaming Laptop:1`;
       const orderNumber = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
       
       // Get or create customer user
-      let user = await User.findOne({ where: { email: phoneNumber + '@whatsapp.local' } });
+      let user = await User.findOne({ where: { email: mobileNo + '@whatsapp.local' } });
       if (!user) {
         user = await User.create({
-          email: phoneNumber + '@whatsapp.local',
+          email: mobileNo + '@whatsapp.local',
           role: 'customer'
         });
       }
@@ -411,9 +411,9 @@ Example: ORDER Gaming Laptop:1`;
     }
   }
 
-  async getOrderStatus(phoneNumber) {
+  async getOrderStatus(mobileNo) {
     try {
-      const user = await User.findOne({ where: { email: phoneNumber + '@whatsapp.local' } });
+      const user = await User.findOne({ where: { email: mobileNo + '@whatsapp.local' } });
       if (!user) {
         return '📦 No orders found for this number.';
       }

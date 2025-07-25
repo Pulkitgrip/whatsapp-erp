@@ -349,31 +349,31 @@ class MultiUserWhatsAppService {
 
   async handleIncomingMessage(ownerId, msg) {
     try {
-      const phoneNumber = msg.key.remoteJid.replace('@s.whatsapp.net', '');
+      const mobileNo = msg.key.remoteJid.replace('@s.whatsapp.net', '');
       const messageContent = msg.message?.conversation || 
                            msg.message?.extendedTextMessage?.text || 
                            'Media message';
       
-      logger.info(`Received message from ${phoneNumber} to user ${ownerId}: ${messageContent}`);
+      logger.info(`Received message from ${mobileNo} to user ${ownerId}: ${messageContent}`);
 
       // Check if sender exists in our database by phone number
       let sender = await User.findOne({ 
-        where: { phoneNumber: phoneNumber } 
+        where: { mobileNo: mobileNo } 
       });
 
       if (!sender) {
-        logger.info(`Message from ${phoneNumber} ignored - sender not in database (not a registered user)`);
+        logger.info(`Message from ${mobileNo} ignored - sender not in database (not a registered user)`);
         return; // Only process messages from users in our database
       }
 
-      logger.info(`Processing message from registered user ${sender.name || sender.email} (${phoneNumber})`);
+      logger.info(`Processing message from registered user ${sender.name || sender.email} (${mobileNo})`);
 
       // Save incoming message
-      await this.saveIncomingMessage(ownerId, sender.id, msg, phoneNumber, messageContent);
+      await this.saveIncomingMessage(ownerId, sender.id, msg, mobileNo, messageContent);
 
       // Process bot response only if sender is in database
       if (messageContent !== 'Media message') {
-        await this.processBotResponse(ownerId, sender.id, phoneNumber, messageContent, msg.key.remoteJid);
+        await this.processBotResponse(ownerId, sender.id, mobileNo, messageContent, msg.key.remoteJid);
       }
 
     } catch (error) {
@@ -381,7 +381,7 @@ class MultiUserWhatsAppService {
     }
   }
 
-  async saveIncomingMessage(ownerId, senderId, msg, phoneNumber, content) {
+  async saveIncomingMessage(ownerId, senderId, msg, mobileNo, content) {
     try {
       // Get or create conversation for this owner
       let conversation = await Conversation.findOne({ 
@@ -416,7 +416,7 @@ class MultiUserWhatsAppService {
     }
   }
 
-  async processBotResponse(ownerId, senderId, phoneNumber, messageContent, chatId) {
+  async processBotResponse(ownerId, senderId, mobileNo, messageContent, chatId) {
     try {
       const lowerContent = messageContent.toLowerCase();
       let response = null;
@@ -454,7 +454,7 @@ Example: ORDER Gaming Laptop:1`;
       }
 
       if (response) {
-        await this.sendTextMessage(ownerId, phoneNumber + '@s.whatsapp.net', response);
+        await this.sendTextMessage(ownerId, mobileNo + '@s.whatsapp.net', response);
       }
 
     } catch (error) {

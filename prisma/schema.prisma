@@ -12,7 +12,7 @@ datasource db {
 
 model User {
   id                Int           @id @default(autoincrement())
-  phoneNumber       String?       @unique @map("phone_number")
+  mobileNo       String?       @unique @map("phone_number")
   email             String?       @unique
   name              String?
   password          String?       // For ERP users
