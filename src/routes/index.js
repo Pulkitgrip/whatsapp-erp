@@ -31,62 +31,66 @@ router.use('/whatsapp', whatsappRoutes);
 // API documentation
 router.get('/', (req, res) => {
   res.json({
-    message: 'WhatsApp ERP API v2.0 - Multi-User',
-    version: '2.0.0',
-    features: [
-      'Multi-user WhatsApp connections',
-      'Database-based auth storage (Vercel compatible)',
-      'Per-user conversation management',
-      'Contact-based message filtering',
-      'Persistent session management'
-    ],
-    endpoints: {
-      authentication: {
-        'POST /auth/signup': 'Register new user',
-        'POST /auth/login': 'User login',
-        'GET /auth/profile': 'Get user profile (requires auth)'
-      },
-      products: {
-        'GET /products': 'List all products',
-        'POST /products': 'Create new product (requires auth)',
-        'GET /products/:id': 'Get specific product',
-        'PUT /products/:id': 'Update product (requires auth)',
-        'DELETE /products/:id': 'Delete product (requires auth)'
-      },
-      categories: {
-        'GET /categories': 'List all categories',
-        'POST /categories': 'Create new category (requires auth)'
-      },
-      whatsapp: {
-        connection: {
-          'POST /whatsapp/connect': 'Connect user WhatsApp (requires auth)',
-          'POST /whatsapp/disconnect': 'Disconnect user WhatsApp (requires auth)',
-          'GET /whatsapp/status': 'Get connection status (requires auth)',
-          'GET /whatsapp/qr': 'Get QR code via SSE (requires auth)'
+    success: true,
+    data: {
+      message: 'WhatsApp ERP API v2.0 - Multi-User',
+      version: '2.0.0',
+      features: [
+        'Multi-user WhatsApp connections',
+        'Database-based auth storage (Vercel compatible)',
+        'Per-user conversation management',
+        'Contact-based message filtering',
+        'Persistent session management'
+      ],
+      endpoints: {
+        authentication: {
+          'POST /api/auth/signup': 'Register new user',
+          'POST /api/auth/login': 'User login',
+          'GET /api/auth/profile': 'Get user profile (requires auth)'
         },
-        messaging: {
-          'POST /whatsapp/send-message': 'Send message (requires auth)',
-          'POST /whatsapp/send-catalog': 'Send product catalog (requires auth)'
+        products: {
+          'GET /api/products': 'List all products',
+          'POST /api/products': 'Create new product (requires auth)',
+          'GET /api/products/:id': 'Get specific product',
+          'PUT /api/products/:id': 'Update product (requires auth)',
+          'DELETE /api/products/:id': 'Delete product (requires auth)'
         },
-        conversations: {
-          'GET /whatsapp/conversations': 'Get user conversations (requires auth)',
-          'GET /whatsapp/conversations/messages/:conversationId': 'Get conversation messages (requires auth)'
+        categories: {
+          'GET /api/categories': 'List all categories',
+          'POST /api/categories': 'Create new category (requires auth)'
         },
-        contacts: {
-          'GET /whatsapp/contacts': 'Get contact list (requires auth)',
-          'POST /whatsapp/contact/add': 'Add contact for message storage (requires auth)'
-        },
-        admin: {
-          'GET /whatsapp/sessions/active': 'Get all active sessions (admin only)'
+        whatsapp: {
+          connection: {
+            'POST /api/whatsapp/connect': 'Connect user WhatsApp (requires auth)',
+            'POST /api/whatsapp/disconnect': 'Disconnect user WhatsApp (requires auth)',
+            'GET /api/whatsapp/status': 'Get connection status (requires auth)',
+            'GET /api/whatsapp/qr': 'Get QR code via SSE (requires auth)'
+          },
+          messaging: {
+            'POST /api/whatsapp/send-message': 'Send message (requires auth)',
+            'POST /api/whatsapp/send-catalog': 'Send product catalog (requires auth)'
+          },
+          conversations: {
+            'GET /api/whatsapp/conversations': 'Get user conversations (requires auth)',
+            'GET /api/whatsapp/conversations/messages/:conversationId': 'Get conversation messages (requires auth)'
+          },
+          contacts: {
+            'GET /api/whatsapp/contacts': 'Get contact list (requires auth)',
+            'POST /api/whatsapp/contact/add': 'Add contact for message storage (requires auth)'
+          },
+          admin: {
+            'GET /api/whatsapp/sessions/active': 'Get all active sessions (admin only)'
+          }
         }
-      }
+      },
+      notes: [
+        'All WhatsApp endpoints require JWT authentication',
+        'Messages are only stored from contacts in the database',
+        'Each user maintains their own WhatsApp connection',
+        'Auth data is stored in database for Vercel compatibility'
+      ]
     },
-    notes: [
-      'All WhatsApp endpoints require JWT authentication',
-      'Messages are only stored from contacts in the database',
-      'Each user maintains their own WhatsApp connection',
-      'Auth data is stored in database for Vercel compatibility'
-    ]
+    timestamp: Date.now()
   });
 });
 
