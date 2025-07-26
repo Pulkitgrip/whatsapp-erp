@@ -352,16 +352,11 @@ router.get('/qr/base64', authMiddleware, async (req, res) => {
 
 /**
  * POST /whatsapp/send-message
-<<<<<<< HEAD
  * Send a message to a specific user and save to database
-=======
- * Send a message to a specific WhatsApp number
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
  */
 router.post('/send-message', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
-<<<<<<< HEAD
     const { to, message, conversationId } = req.body;
 
     console.log('Send message request:', { userId, to, message, conversationId });
@@ -402,60 +397,6 @@ router.post('/send-message', authMiddleware, async (req, res) => {
       res.status(400).json({
         success: false,
         error: result.error || 'Failed to send message'
-=======
-    const { to, message } = req.body;
-    
-    // Validate required fields
-    if (!to) {
-      return res.status(400).json({
-        status: 400,
-        message: 'Recipient phone number (to) is required',
-        data: null
-      });
-    }
-    
-    if (!message) {
-      return res.status(400).json({
-        status: 400,
-        message: 'Message content is required',
-        data: null
-      });
-    }
-    
-    // Format phone number if needed
-    let formattedNumber = to;
-    if (!to.includes('@')) {
-      // Remove any non-digit characters except +
-      formattedNumber = to.replace(/[^\d+]/g, '');
-      
-      // Ensure it has a + prefix if it doesn't
-      if (!formattedNumber.startsWith('+')) {
-        formattedNumber = '+' + formattedNumber;
-      }
-    }
-    
-    console.log(`Sending message to ${formattedNumber} from user ${userId}`);
-    
-    // Send the message
-    const result = await multiUserWhatsAppService.sendTextMessage(userId, formattedNumber, message);
-    
-    if (result.success) {
-      res.json({
-        status: 200,
-        message: 'Message sent successfully',
-        data: {
-          messageId: result.messageId,
-          timestamp: result.timestamp,
-          to: formattedNumber,
-          content: message
-        }
-      });
-    } else {
-      res.status(500).json({
-        status: 500,
-        message: 'Failed to send message',
-        error: result.error
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
       });
     }
   } catch (error) {

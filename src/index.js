@@ -406,20 +406,7 @@ async function initializeDatabase() {
 
 // Initialize the database before starting the server
 initializeDatabase().then(() => {
-<<<<<<< HEAD
   const PORT = process.env.PORT || 8000;
-=======
-  const PORT = process.env.PORT;
-  const http = require('http');
-  const socketService = require('./services/socketService');
-  
-  // Create HTTP server
-  const server = http.createServer(app);
-  
-  // Initialize Socket.IO
-  socketService.initialize(server);
-  
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
   server.listen(PORT, () => {
     console.log(`
 🚀 WhatsApp ERP Server v2.0 is running!

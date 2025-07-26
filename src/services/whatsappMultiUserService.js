@@ -436,7 +436,6 @@ class MultiUserWhatsAppService {
         where: { mobileNo: mobileNo } 
       });
 
-<<<<<<< HEAD
       // If sender doesn't exist in database, create a temporary sender record
       if (!sender) {
         logger.info(`Creating temporary sender record for ${mobileNo}`);
@@ -450,41 +449,12 @@ class MultiUserWhatsAppService {
 
       logger.info(`Processing message from ${sender.name || sender.email || mobileNo} (${mobileNo})`);
 
-=======
-      if (sender) {
-        senderId = sender.id;
-        logger.info(`Processing message from registered user ${sender.name || sender.email} (${mobileNo})`);
-      } else {
-        logger.info(`Message from ${mobileNo} - sender not in database but will be processed`);
-        
-        // Create a temporary user record for this sender
-        try {
-          sender = await User.create({
-            name: `WhatsApp User ${mobileNo}`,
-            email: `${mobileNo}@whatsapp.temp`,
-            mobileNo: mobileNo,
-            role: 'customer'
-          });
-          senderId = sender.id;
-          logger.info(`Created temporary user for ${mobileNo} with ID ${senderId}`);
-        } catch (userError) {
-          logger.warn(`Could not create temporary user for ${mobileNo}: ${userError.message}`);
-        }
-      }
-
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
       // Save incoming message
       await this.saveIncomingMessage(ownerId, senderId, msg, mobileNo, messageContent);
 
-<<<<<<< HEAD
       // Process bot response only if sender is in database (for registered users)
       if (messageContent !== 'Media message' && !sender.id.toString().startsWith('temp_')) {
         await this.processBotResponse(ownerId, sender.id, mobileNo, messageContent, msg.key.remoteJid);
-=======
-      // Process bot response for all messages
-      if (messageContent !== 'Media message') {
-        await this.processBotResponse(ownerId, senderId, mobileNo, messageContent, msg.key.remoteJid);
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
       }
 
     } catch (error) {
@@ -692,10 +662,9 @@ class MultiUserWhatsAppService {
         defaults: {
           whatsappChatId: msg.key.remoteJid,
           ownerId: ownerId,
-<<<<<<< HEAD
           isGroup: msg.key.remoteJid.includes('@g.us')
-        });
-      }
+        }
+      });
 
       // Handle temporary sender IDs (for users not in database)
       let actualSenderId = senderId;
@@ -712,11 +681,6 @@ class MultiUserWhatsAppService {
         messageType: 'text',
         isOutgoing: false,
         status: 'received'
-=======
-          isGroup: msg.key.remoteJid.includes('@g.us'),
-          conversationType: msg.key.remoteJid.includes('@g.us') ? 'group' : 'individual'
-        }
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
       });
 
       if (conversationCreated) {
@@ -1166,11 +1130,7 @@ Example: ORDER Gaming Laptop:1`;
       }
 
       // Save outgoing message
-<<<<<<< HEAD
       const savedMessage = await Message.create({
-=======
-      const message = await Message.create({
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
         conversationId: conversation.id,
         senderId: ownerId,
         messageId: messageId || `out_${Date.now()}_${Math.random()}`,

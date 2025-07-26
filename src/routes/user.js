@@ -1,10 +1,6 @@
 const express = require('express');
 const router = express.Router();
-<<<<<<< HEAD
-const { addUser, getUsers, updateUser, deleteUser, getMe } = require('../controllers/userController');
-=======
-const { addUser, getUsers, updateUser, deleteUser, getUserById } = require('../controllers/userController');
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
+const { addUser, getUsers, updateUser, deleteUser, getMe ,getUserById} = require('../controllers/userController');
 const authMiddleware = require('../middleware/authMiddleware');
 const roleMiddleware = require('../middleware/roleMiddleware');
 

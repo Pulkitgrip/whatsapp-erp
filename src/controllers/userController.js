@@ -131,11 +131,9 @@ exports.deleteUser = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-<<<<<<< HEAD
 };
 
 exports.getMe = async (req, res, next) => {
-  try {
     // The user is already authenticated and available in req.user from authMiddleware
     const user = req.user;
     
@@ -161,8 +159,8 @@ exports.getMe = async (req, res, next) => {
       data: {
         user: userData
       }
-=======
-}; 
+    });
+}
 
 exports.getUserById = async (req, res, next) => {
   try {
@@ -175,7 +173,6 @@ exports.getUserById = async (req, res, next) => {
       status: 200,
       message: 'User fetched successfully',
       data: { user }
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
     });
   } catch (err) {
     next(err);
