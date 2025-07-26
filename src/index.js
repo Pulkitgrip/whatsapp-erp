@@ -7,7 +7,6 @@ const errorHandler = require('./middleware/errorHandler');
 const createError = require('http-errors');
 const fs = require('fs');
 const path = require('path');
-const indexRoutes = require('./routes/index');
 
 const app = express();
 const server = createServer(app);
@@ -267,7 +266,8 @@ const corsOptions = {
       'http://localhost:5173',
       'https://erp-whatsapp.vercel.app',
       'http://localhost:3000',
-      'http://localhost:3001'
+      'http://localhost:3001',
+      'http://localhost:8000'
     ];
     
     if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
@@ -287,11 +287,8 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Import routes
-const authRoutes = require('./routes/auth'); // Use our fixed auth router
-const productRoutes = require('./routes/product');
-const categoryRoutes = require('./routes/category');
 const whatsappRoutes = require('./routes/whatsapp');
-
+const indexRoutes = require('./routes/index');
 // Import services
 const sessionCleanupService = require('./services/sessionCleanupService');
 
@@ -299,7 +296,7 @@ const sessionCleanupService = require('./services/sessionCleanupService');
 // app.use('/api/auth', authRoutes);
 // app.use('/api/products', productRoutes);
 // app.use('/api/categories', categoryRoutes);
-app.use('/api', indexRoutes);
+app.use('/api/', indexRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 
 // Health check endpoint
@@ -409,13 +406,27 @@ async function initializeDatabase() {
 
 // Initialize the database before starting the server
 initializeDatabase().then(() => {
+<<<<<<< HEAD
   const PORT = process.env.PORT || 8000;
+=======
+  const PORT = process.env.PORT;
+  const http = require('http');
+  const socketService = require('./services/socketService');
+  
+  // Create HTTP server
+  const server = http.createServer(app);
+  
+  // Initialize Socket.IO
+  socketService.initialize(server);
+  
+>>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
   server.listen(PORT, () => {
     console.log(`
 🚀 WhatsApp ERP Server v2.0 is running!
 ==========================================
 📡 Server: http://localhost:${PORT}
 📖 API Documentation: http://localhost:${PORT}/
+🔌 Socket.IO: http://localhost:${PORT}/socket.io
 �� Health Check: http://localhost:${PORT}/health
 
 📝 Multi-User WhatsApp Features:

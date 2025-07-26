@@ -119,7 +119,7 @@ class WhatsAppService {
         // Display QR in terminal for convenience
         qrcode.generate(qr, { small: true });
         console.log("\nPlease scan the QR code with WhatsApp to connect");
-        console.log("Or visit: http://localhost:3000/api/whatsapp/qr\n");
+        console.log("Or visit: http://localhost:8000/api/whatsapp/qr\n");
       }
 
       if (connection === "close") {

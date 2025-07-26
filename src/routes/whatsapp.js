@@ -169,10 +169,117 @@ router.get('/qr', authMiddleware, async (req, res) => {
         }
       });
     }
+    else{
+      return res.status(200).json({
+        status: 200,
+        message: 'WhatsApp is not connected',
+        data: {
+          connected: false,
+          connectionState: status.connectionState
+        }
+      });
+    }
     
-    // If force new requested or no QR available, generate fresh QR
+    // // If force new requested or no QR available, generate fresh QR
+    // if (forceNew || !status.qrCode) {
+    //   console.log(`Generating fresh QR code for user ${userId}`);
+    //   await multiUserWhatsAppService.forceNewQRCode(userId);
+      
+    //   // Wait for QR code generation with multiple attempts
+    //   const maxAttempts = 15;
+    //   const delayBetweenAttempts = 1000; // 1 second
+      
+    //   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    //     await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts));
+        
+    //     const updatedStatus = await multiUserWhatsAppService.getUserConnectionStatus(userId);
+        
+    //     if (updatedStatus.qrCode) {
+    //       // Convert QR code to base64 data URL
+    //       const QRCode = require('qrcode');
+    //       const qrDataURL = await QRCode.toDataURL(updatedStatus.qrCode, {
+    //         width: 256,
+    //         margin: 2
+    //       });
+          
+    //       return res.status(200).json({
+    //         status: 200,
+    //         message: 'QR code generated successfully',
+    //         data: qrDataURL
+    //       });
+    //     }
+        
+    //     if (updatedStatus.connected) {
+    //       return res.status(200).json({
+    //         status: 200,
+    //         message: 'WhatsApp is already connected',
+    //         data: {
+    //           connected: true,
+    //           connectionState: updatedStatus.connectionState
+    //         }
+    //       });
+    //     }
+        
+    //     console.log(`QR code generation attempt ${attempt}/${maxAttempts} for user ${userId}`);
+    //   }
+      
+    //   // If we reach here, QR code generation failed
+    //   return res.status(202).json({
+    //     status: 202,
+    //     message: 'QR code generation is taking longer than expected. Please try again with ?force=true',
+    //     data: { timeout: true }
+    //   });
+    // }
+    
+    // // Convert existing QR code to base64 data URL
+    // const QRCode = require('qrcode');
+    // const qrDataURL = await QRCode.toDataURL(status.qrCode, {
+    //   width: 256,
+    //   margin: 2
+    // });
+    
+    // // Return only the base64 data
+    // return res.status(200).json({
+    //   status: 200,
+    //   message: 'QR code retrieved successfully',
+    //   data: qrDataURL
+    // });
+    
+  } catch (error) {
+    console.error(`Error getting QR code for user ${userId}:`, error);
+    res.status(500).json({
+      status: 500,
+      message: 'Failed to get QR code',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /whatsapp/qr/base64
+ * Get QR code as base64 data URL
+ */
+router.get('/qr/base64', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const forceNew = req.query.force === 'true';
+    
+    let status = await multiUserWhatsAppService.getUserConnectionStatus(userId);
+    
+    // If already connected
+    if (status.connected) {
+      return res.status(200).json({
+        status: 200,
+        message: 'WhatsApp is already connected',
+        data: {
+          connected: true,
+          connectionState: status.connectionState
+        }
+      });
+    }
+    
+    // Force new QR if requested or if QR is not available
     if (forceNew || !status.qrCode) {
-      console.log(`Generating fresh QR code for user ${userId}`);
       await multiUserWhatsAppService.forceNewQRCode(userId);
       
       // Wait for QR code generation with multiple attempts
@@ -185,10 +292,18 @@ router.get('/qr', authMiddleware, async (req, res) => {
         const updatedStatus = await multiUserWhatsAppService.getUserConnectionStatus(userId);
         
         if (updatedStatus.qrCode) {
+          // Convert QR code to base64 data URL
+          const QRCode = require('qrcode');
+          const qrDataURL = await QRCode.toDataURL(updatedStatus.qrCode, {
+            width: 256,
+            margin: 2
+          });
+          
+          // Return only the base64 data
           return res.status(200).json({
             status: 200,
             message: 'QR code generated successfully',
-            data: { qrCode: updatedStatus.qrCode }
+            data: qrDataURL
           });
         }
         
@@ -202,11 +317,8 @@ router.get('/qr', authMiddleware, async (req, res) => {
             }
           });
         }
-        
-        console.log(`QR code generation attempt ${attempt}/${maxAttempts} for user ${userId}`);
       }
       
-      // If we reach here, QR code generation failed
       return res.status(202).json({
         status: 202,
         message: 'QR code generation is taking longer than expected. Please try again with ?force=true',
@@ -214,18 +326,25 @@ router.get('/qr', authMiddleware, async (req, res) => {
       });
     }
     
-    // Return existing QR code
+    // Convert existing QR code to base64 data URL
+    const QRCode = require('qrcode');
+    const qrDataURL = await QRCode.toDataURL(status.qrCode, {
+      width: 256,
+      margin: 2
+    });
+    
+    // Return only the base64 data
     return res.status(200).json({
       status: 200,
       message: 'QR code retrieved successfully',
-      data: { qrCode: status.qrCode }
+      data: qrDataURL
     });
     
   } catch (error) {
-    console.error(`Error getting QR code for user ${userId}:`, error);
+    console.error(`Error generating QR base64 for user ${req.user?.id}:`, error);
     res.status(500).json({
       status: 500,
-      message: 'Failed to get QR code',
+      message: 'Failed to generate QR code base64',
       error: error.message
     });
   }
@@ -233,11 +352,16 @@ router.get('/qr', authMiddleware, async (req, res) => {
 
 /**
  * POST /whatsapp/send-message
+<<<<<<< HEAD
  * Send a message to a specific user and save to database
+=======
+ * Send a message to a specific WhatsApp number
+>>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
  */
 router.post('/send-message', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
+<<<<<<< HEAD
     const { to, message, conversationId } = req.body;
 
     console.log('Send message request:', { userId, to, message, conversationId });
@@ -278,6 +402,60 @@ router.post('/send-message', authMiddleware, async (req, res) => {
       res.status(400).json({
         success: false,
         error: result.error || 'Failed to send message'
+=======
+    const { to, message } = req.body;
+    
+    // Validate required fields
+    if (!to) {
+      return res.status(400).json({
+        status: 400,
+        message: 'Recipient phone number (to) is required',
+        data: null
+      });
+    }
+    
+    if (!message) {
+      return res.status(400).json({
+        status: 400,
+        message: 'Message content is required',
+        data: null
+      });
+    }
+    
+    // Format phone number if needed
+    let formattedNumber = to;
+    if (!to.includes('@')) {
+      // Remove any non-digit characters except +
+      formattedNumber = to.replace(/[^\d+]/g, '');
+      
+      // Ensure it has a + prefix if it doesn't
+      if (!formattedNumber.startsWith('+')) {
+        formattedNumber = '+' + formattedNumber;
+      }
+    }
+    
+    console.log(`Sending message to ${formattedNumber} from user ${userId}`);
+    
+    // Send the message
+    const result = await multiUserWhatsAppService.sendTextMessage(userId, formattedNumber, message);
+    
+    if (result.success) {
+      res.json({
+        status: 200,
+        message: 'Message sent successfully',
+        data: {
+          messageId: result.messageId,
+          timestamp: result.timestamp,
+          to: formattedNumber,
+          content: message
+        }
+      });
+    } else {
+      res.status(500).json({
+        status: 500,
+        message: 'Failed to send message',
+        error: result.error
+>>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
       });
     }
   } catch (error) {
@@ -285,6 +463,69 @@ router.post('/send-message', authMiddleware, async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+/**
+ * POST /whatsapp/send-test-message
+ * Send a test message to verify WhatsApp functionality
+ */
+router.post('/send-test-message', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { to } = req.body;
+    
+    // Validate required fields
+    if (!to) {
+      return res.status(400).json({
+        status: 400,
+        message: 'Recipient phone number (to) is required',
+        data: null
+      });
+    }
+    
+    // Format phone number
+    let formattedNumber = to;
+    if (!to.includes('@')) {
+      // Remove any non-digit characters except +
+      formattedNumber = to.replace(/[^\d+]/g, '');
+      
+      // Ensure it has country code
+      if (!formattedNumber.startsWith('+')) {
+        formattedNumber = '+' + formattedNumber;
+      }
+    }
+    
+    const testMessage = `🧪 This is a test message from WhatsApp ERP system.\n\nTime: ${new Date().toISOString()}\nSent by user ID: ${userId}`;
+    console.log(`Sending test message to ${formattedNumber} from user ${userId}`);
+    
+    // Send message
+    const result = await multiUserWhatsAppService.sendTextMessage(userId, formattedNumber, testMessage);
+    
+    if (result.success) {
+      return res.status(200).json({
+        status: 200,
+        message: 'Test message sent successfully',
+        data: {
+          messageId: result.messageId,
+          timestamp: result.timestamp,
+          testMessage
+        }
+      });
+    } else {
+      return res.status(500).json({
+        status: 500,
+        message: `Failed to send test message: ${result.error}`,
+        data: null
+      });
+    }
+  } catch (error) {
+    console.error('Error sending WhatsApp test message:', error);
+    return res.status(500).json({
+      status: 500,
+      message: `Error sending WhatsApp test message: ${error.message}`,
+      data: null
     });
   }
 });
@@ -427,6 +668,152 @@ router.get('/conversations/messages/:conversationId', authMiddleware, async (req
 });
 
 /**
+ * GET /whatsapp/messages/between
+ * Get all messages between two phone numbers
+ * Query params: fromNumber, toNumber
+ * Optional: limit, offset for pagination
+ */
+router.get('/messages/between', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { fromNumber, toNumber, limit = 50000, offset = 0 } = req.query;
+    const { Conversation, Message } = require('../models/whatsappModels');
+    const { Op } = require('sequelize');
+
+    // Validate required parameters
+    if (!fromNumber || !toNumber) {
+      return res.status(400).json({
+        status: 400,
+        message: 'Both fromNumber and toNumber are required',
+        data: null
+      });
+    }
+
+    // Helper function to normalize phone numbers
+    const normalizePhoneNumber = (phoneNumber) => {
+      return phoneNumber.replace(/^\+/, '').replace(/\s/g, '');
+    };
+
+    // Normalize the phone numbers
+    const normalizedFromNumber = normalizePhoneNumber(fromNumber);
+    const normalizedToNumber = normalizePhoneNumber(toNumber);
+
+    // Create WhatsApp JIDs
+    const fromJid = normalizedFromNumber + '@s.whatsapp.net';
+    const toJid = normalizedToNumber + '@s.whatsapp.net';
+
+    // Find users by mobile numbers
+    const fromUser = await User.findOne({
+      where: {
+        mobileNo: {
+          [Op.or]: [
+            '+' + normalizedFromNumber,
+            normalizedFromNumber
+          ]
+        }
+      }
+    });
+
+    const toUser = await User.findOne({
+      where: {
+        mobileNo: {
+          [Op.or]: [
+            '+' + normalizedToNumber,
+            normalizedToNumber
+          ]
+        }
+      }
+    });
+
+    // Find conversations between these numbers for this user
+    const conversations = await Conversation.findAll({
+      where: {
+        ownerId: userId,
+        whatsappChatId: {
+          [Op.in]: [fromJid, toJid]
+        }
+      },
+      include: [{
+        model: Message,
+        include: [{
+          model: User,
+          attributes: ['id', 'name', 'mobileNo', 'email']
+        }],
+        order: [['createdAt', 'ASC']]
+      }]
+    });
+
+    // Collect all messages from both directions
+    let allMessages = [];
+    
+    for (const conversation of conversations) {
+      if (conversation.Messages) {
+        allMessages = allMessages.concat(conversation.Messages);
+      }
+    }
+
+    // Sort messages by creation time
+    allMessages.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+    // Apply pagination
+    const paginatedMessages = allMessages.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+
+    // Format response with additional context
+    const response = {
+      fromNumber: fromNumber,
+      toNumber: toNumber,
+      fromUser: fromUser ? {
+        id: fromUser.id,
+        name: fromUser.name,
+        email: fromUser.email,
+        mobileNo: fromUser.mobileNo
+      } : null,
+      toUser: toUser ? {
+        id: toUser.id,
+        name: toUser.name,
+        email: toUser.email,
+        mobileNo: toUser.mobileNo
+      } : null,
+      totalMessages: allMessages.length,
+      currentPage: Math.floor(parseInt(offset) / parseInt(limit)) + 1,
+      totalPages: Math.ceil(allMessages.length / parseInt(limit)),
+      messagesPerPage: parseInt(limit),
+      messages: paginatedMessages.map(msg => ({
+        id: msg.id,
+        messageId: msg.messageId,
+        content: msg.content,
+        messageType: msg.messageType,
+        isOutgoing: msg.isOutgoing,
+        status: msg.status,
+        createdAt: msg.createdAt,
+        updatedAt: msg.updatedAt,
+        sender: msg.User ? {
+          id: msg.User.id,
+          name: msg.User.name,
+          mobileNo: msg.User.mobileNo,
+          email: msg.User.email
+        } : null,
+        conversationId: msg.conversationId
+      }))
+    };
+
+    res.json({
+      status: 200,
+      message: `Retrieved ${paginatedMessages.length} messages between ${fromNumber} and ${toNumber}`,
+      data: response
+    });
+
+  } catch (error) {
+    console.error(`Error getting messages between numbers for user ${req.user?.id}:`, error);
+    res.status(500).json({
+      status: 500,
+      message: 'Failed to retrieve messages between numbers',
+      error: error.message
+    });
+  }
+});
+
+/**
  * GET /whatsapp/debug/recent-messages
  * Get recent messages for debugging (admin only)
  */
@@ -530,6 +917,49 @@ router.get('/sessions/active', authMiddleware, async (req, res) => {
       status: 500,
       message: 'Failed to get active sessions',
       error: error.message
+    });
+  }
+});
+
+/**
+ * GET /whatsapp/debug/status
+ * Get debug information about WhatsApp connections and bot status
+ */
+router.get('/debug/status', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const whatsappService = req.app.get('whatsappService');
+    
+    // Get connection status
+    const connectionStatus = await whatsappService.getUserConnectionStatus(userId);
+    
+    // Get active connections
+    const activeConnections = whatsappService.getActiveConnections();
+    
+    // Get recent messages
+    const { Message } = require('../models/whatsappModels');
+    const recentMessages = await Message.findAll({
+      limit: 10,
+      order: [['createdAt', 'DESC']],
+      attributes: ['id', 'content', 'isOutgoing', 'createdAt']
+    });
+    
+    return res.status(200).json({
+      status: 200,
+      message: 'Debug information retrieved',
+      data: {
+        connectionStatus,
+        activeConnectionsCount: activeConnections.length,
+        isCurrentUserConnected: activeConnections.includes(userId),
+        recentMessages
+      }
+    });
+  } catch (error) {
+    console.error('Error getting debug status:', error);
+    return res.status(500).json({
+      status: 500,
+      message: `Error getting debug status: ${error.message}`,
+      data: null
     });
   }
 });

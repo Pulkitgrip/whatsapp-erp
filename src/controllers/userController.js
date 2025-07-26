@@ -131,6 +131,7 @@ exports.deleteUser = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+<<<<<<< HEAD
 };
 
 exports.getMe = async (req, res, next) => {
@@ -160,6 +161,21 @@ exports.getMe = async (req, res, next) => {
       data: {
         user: userData
       }
+=======
+}; 
+
+exports.getUserById = async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return next(createError(404, 'User not found'));
+    }
+    res.json({
+      status: 200,
+      message: 'User fetched successfully',
+      data: { user }
+>>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
     });
   } catch (err) {
     next(err);
