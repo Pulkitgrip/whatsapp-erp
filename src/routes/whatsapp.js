@@ -4,6 +4,9 @@ const multiUserWhatsAppService = require('../services/whatsappMultiUserService')
 const { BotResponse, WhatsAppSession } = require('../models/whatsappModels');
 const authMiddleware = require('../middleware/authMiddleware');
 const User = require('../models/user');
+const { Op } = require('sequelize');
+const Message = require('../models/whatsappModels').Message;
+const Conversation = require('../models/whatsappModels').Conversation;
 
 /**
  * POST /whatsapp/connect
@@ -230,18 +233,19 @@ router.get('/qr', authMiddleware, async (req, res) => {
 
 /**
  * POST /whatsapp/send-message
- * Send a message from user's WhatsApp
+ * Send a message to a specific user and save to database
  */
 router.post('/send-message', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { to, message } = req.body;
+    const { to, message, conversationId } = req.body;
+
+    console.log('Send message request:', { userId, to, message, conversationId });
 
     if (!to || !message) {
       return res.status(400).json({
-        status: 400,
-        message: 'Phone number and message are required',
-        data: null
+        success: false,
+        error: 'Phone number and message are required'
       });
     }
 
@@ -249,25 +253,37 @@ router.post('/send-message', authMiddleware, async (req, res) => {
     const connectionStatus = await multiUserWhatsAppService.getUserConnectionStatus(userId);
     if (!connectionStatus.connected) {
       return res.status(400).json({
-        status: 400,
-        message: 'WhatsApp is not connected. Please connect first.',
-        data: null
+        success: false,
+        error: 'WhatsApp is not connected. Please connect first.'
       });
     }
 
-    const result = await multiUserWhatsAppService.sendTextMessage(userId, to, message);
+    // Clean the phone number
+    const cleanTo = to.replace(/^\+/, '').replace(/\s/g, '');
+    const formattedTo = `${cleanTo}@s.whatsapp.net`;
+
+    // Send message via WhatsApp
+    const result = await multiUserWhatsAppService.sendTextMessage(userId, formattedTo, message);
     
-    res.status(result.success ? 200 : 400).json({
-      status: result.success ? 200 : 400,
-      message: result.success ? 'Message sent successfully' : 'Failed to send message',
-      data: result.success ? result : null,
-      error: result.success ? null : result.error
-    });
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Message sent successfully',
+        data: {
+          messageId: result.messageId,
+          timestamp: result.timestamp
+        }
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error || 'Failed to send message'
+      });
+    }
   } catch (error) {
-    console.error(`Error sending message for user ${req.user?.id}:`, error);
+    console.error('Error sending message:', error);
     res.status(500).json({
-      status: 500,
-      message: 'Failed to send message',
+      success: false,
       error: error.message
     });
   }
@@ -652,6 +668,185 @@ router.get('/contacts', authMiddleware, async (req, res) => {
     res.status(500).json({
       status: 500,
       message: 'Failed to get contacts',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /whatsapp/messages/between?fromNumber=...&toNumber=...
+ * Get all messages between two numbers from the database
+ */
+router.get('/messages/between', authMiddleware, async (req, res) => {
+  try {
+    const { fromNumber, toNumber } = req.query;
+    console.log('Fetching messages between:', { fromNumber, toNumber, userId: req.user?.id });
+    
+    if (!fromNumber || !toNumber) {
+      return res.status(400).json({ success: false, error: 'fromNumber and toNumber are required' });
+    }
+
+    // Find all conversations where the whatsappChatId matches either number
+    const chatIds = [
+      `${fromNumber}@s.whatsapp.net`,
+      `${toNumber}@s.whatsapp.net`
+    ];
+
+    console.log('Looking for conversations with chatIds:', chatIds);
+
+    // Find all conversations between these two numbers
+    const conversations = await Conversation.findAll({
+      where: {
+        whatsappChatId: { [Op.in]: chatIds },
+        conversationType: 'individual'
+      }
+    });
+
+    console.log('Found conversations:', conversations.length, conversations.map(c => ({ id: c.id, chatId: c.whatsappChatId })));
+
+    if (!conversations.length) {
+      console.log('No conversations found, returning empty array');
+      return res.json({ success: true, data: [] });
+    }
+
+    // Get all conversation IDs
+    const conversationIds = conversations.map(c => c.id);
+    console.log('Conversation IDs:', conversationIds);
+
+    // Find all messages for these conversations
+    const messages = await Message.findAll({
+      where: {
+        conversationId: { [Op.in]: conversationIds }
+      },
+      order: [['createdAt', 'ASC']], // Use createdAt field for ordering
+      attributes: ['id', 'conversationId', 'senderId', 'messageId', 'messageType', 'content', 'isOutgoing', 'status', 'createdAt'] // Remove timestamp field
+    });
+
+    console.log('Found messages:', messages.length, messages.map(m => ({ id: m.id, content: m.content?.substring(0, 50) })));
+
+    res.json({ success: true, data: messages });
+  } catch (error) {
+    console.error('Error fetching messages between:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /whatsapp/messages/conversation/:conversationId
+ * Get all messages for a specific conversation
+ */
+router.get('/messages/conversation/:conversationId', authMiddleware, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const userId = req.user.id;
+
+    console.log('Getting messages for conversation:', conversationId, 'user:', userId);
+
+    // Verify the conversation belongs to the user
+    const conversation = await Conversation.findOne({
+      where: {
+        id: conversationId,
+        ownerId: userId
+      }
+    });
+
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conversation not found'
+      });
+    }
+
+    // Get all messages for this conversation
+    const messages = await Message.findAll({
+      where: {
+        conversationId: conversationId
+      },
+      order: [['createdAt', 'ASC']], // Use createdAt field for ordering
+      include: [
+        {
+          model: User,
+          as: 'sender',
+          attributes: ['id', 'name', 'email', 'mobileNo']
+        }
+      ]
+    });
+
+    res.json({
+      success: true,
+      data: {
+        conversation: {
+          id: conversation.id,
+          whatsappChatId: conversation.whatsappChatId,
+          conversationType: conversation.conversationType,
+          isGroup: conversation.isGroup
+        },
+        messages: messages.map(msg => ({
+          id: msg.id,
+          content: msg.content,
+          senderId: msg.senderId,
+          isOutgoing: msg.isOutgoing,
+          messageType: msg.messageType,
+          createdAt: msg.createdAt,
+          sender: msg.sender ? {
+            id: msg.sender.id,
+            name: msg.sender.name,
+            email: msg.sender.email,
+            mobileNo: msg.sender.mobileNo
+          } : null
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching conversation messages:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /whatsapp/test-incoming-message
+ * Test endpoint to simulate incoming messages (for development only)
+ */
+router.post('/test-incoming-message', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { fromNumber, message } = req.body;
+
+    if (!fromNumber || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'fromNumber and message are required'
+      });
+    }
+
+    console.log('Testing incoming message:', { userId, fromNumber, message });
+
+    // Create a mock WhatsApp message
+    const mockMsg = {
+      key: {
+        remoteJid: `${fromNumber}@s.whatsapp.net`,
+        id: `test_${Date.now()}_${Math.random()}`
+      },
+      message: {
+        conversation: message
+      }
+    };
+
+    // Process the mock message
+    const whatsappService = require('../services/whatsappMultiUserService');
+    await whatsappService.handleIncomingMessage(userId, mockMsg);
+
+    res.json({
+      success: true,
+      message: 'Test message processed successfully'
+    });
+  } catch (error) {
+    console.error('Error processing test message:', error);
+    res.status(500).json({
+      success: false,
       error: error.message
     });
   }

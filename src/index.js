@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 const errorHandler = require('./middleware/errorHandler');
 const createError = require('http-errors');
 const fs = require('fs');
@@ -8,6 +10,246 @@ const path = require('path');
 const indexRoutes = require('./routes/index');
 
 const app = express();
+const server = createServer(app);
+
+// Socket.IO setup
+const io = new Server(server, {
+  cors: {
+    origin: [
+      'http://localhost:5173',
+      'https://erp-whatsapp.vercel.app',
+      'http://localhost:3000',
+      'http://localhost:3001'
+    ],
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  path: '/socket.io'
+});
+
+// Set Socket.IO instance in WhatsApp service for real-time events
+const whatsappService = require('./services/whatsappMultiUserService');
+whatsappService.setSocketIO(io);
+
+// Socket.IO authentication middleware
+const socketAuthMiddleware = require('./middleware/socketAuthMiddleware');
+
+// Apply authentication middleware to socket connections
+io.use(socketAuthMiddleware);
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log('🔌 New socket connection:', socket.id);
+  
+  // Handle authentication
+  socket.on('authenticate', async (data) => {
+    try {
+      console.log('🔐 Socket authentication attempt:', data);
+      // Authentication is handled by middleware, so if we reach here, it's authenticated
+      socket.emit('authenticated', { 
+        success: true, 
+        message: 'Socket authenticated successfully',
+        userId: socket.userId 
+      });
+    } catch (error) {
+      console.error('❌ Socket authentication error:', error);
+      socket.emit('auth_error', { 
+        success: false, 
+        message: 'Authentication failed' 
+      });
+    }
+  });
+
+  // Handle WhatsApp QR code requests
+  socket.on('get_qr_code', async (data) => {
+    try {
+      console.log('📱 QR code request from socket:', socket.id, 'for user:', socket.userId);
+      
+      // Import WhatsApp service (singleton instance)
+      const whatsappService = require('./services/whatsappMultiUserService');
+      
+      // Get QR code for the authenticated user
+      const qrCode = await whatsappService.getQrCode(socket.userId, data.forceNew);
+      
+      if (qrCode && qrCode.qrCode) {
+        // Convert QR code string to data URL
+        const QRCode = require('qrcode');
+        try {
+          const qrDataUrl = await QRCode.toDataURL(qrCode.qrCode);
+          socket.emit('qr_code_response', {
+            success: true,
+            data: qrDataUrl
+          });
+        } catch (qrError) {
+          console.error('Error generating QR code data URL:', qrError);
+          socket.emit('qr_code_response', {
+            success: false,
+            error: 'Failed to generate QR code image'
+          });
+        }
+      } else if (qrCode && qrCode.connected) {
+        socket.emit('qr_code_response', {
+          success: true,
+          data: {
+            connected: true,
+            connectionState: 'open'
+          }
+        });
+      } else {
+        socket.emit('qr_code_response', {
+          success: false,
+          error: 'Failed to generate QR code'
+        });
+      }
+    } catch (error) {
+      console.error('❌ QR code error:', error);
+      socket.emit('qr_code_response', {
+        success: false,
+        error: error.message || 'Failed to get QR code'
+      });
+    }
+  });
+
+  // Handle connection status requests
+  socket.on('get_connection_status', async () => {
+    try {
+      console.log('📊 Connection status request from socket:', socket.id, 'for user:', socket.userId);
+      
+      const whatsappService = require('./services/whatsappMultiUserService');
+      
+      const status = await whatsappService.getConnectionStatus(socket.userId);
+      
+      socket.emit('connection_status', status);
+    } catch (error) {
+      console.error('❌ Connection status error:', error);
+      socket.emit('connection_status', {
+        connected: false,
+        connectionState: 'error',
+        error: error.message
+      });
+    }
+  });
+
+  // Handle contacts requests
+  socket.on('get_contacts', async () => {
+    try {
+      console.log('👥 Contacts request from socket:', socket.id, 'for user:', socket.userId);
+      
+      const whatsappService = require('./services/whatsappMultiUserService');
+      console.log({whatsappService})
+      const contacts = await whatsappService.getContacts(socket.userId);
+      console.log({contacts})
+      
+      socket.emit('contacts_response', {
+        success: true,
+        data: contacts
+      });
+    } catch (error) {
+      console.error('❌ Contacts error:', error);
+      socket.emit('contacts_response', {
+        success: false,
+        error: error.message || 'Failed to get contacts'
+      });
+    }
+  });
+
+  // Handle messages between requests
+  socket.on('get_messages_between', async (data) => {
+    try {
+      console.log('💬 Messages request from socket:', socket.id, 'for user:', socket.userId);
+      
+      const whatsappService = require('./services/whatsappMultiUserService');
+      
+      const messages = await whatsappService.getMessagesBetween(
+        socket.userId,
+        data.fromNumber,
+        data.toNumber,
+        data.limit,
+        data.offset
+      );
+      
+      socket.emit('messages_between_response', {
+        success: true,
+        data: messages
+      });
+    } catch (error) {
+      console.error('❌ Messages error:', error);
+      socket.emit('messages_between_response', {
+        success: false,
+        error: error.message || 'Failed to get messages'
+      });
+    }
+  });
+
+  // Handle message sending
+  socket.on('send_message', async (data) => {
+    try {
+      console.log('📤 Send message request from socket:', socket.id, 'for user:', socket.userId);
+      
+      const whatsappService = require('./services/whatsappMultiUserService');
+      
+      const result = await whatsappService.sendMessage(
+        socket.userId,
+        data.to,
+        data.message,
+        data.conversationId
+      );
+      
+      if (result.success) {
+        socket.emit('message_sent_success', result);
+      } else {
+        socket.emit('message_send_error', result);
+      }
+    } catch (error) {
+      console.error('❌ Send message error:', error);
+      socket.emit('message_send_error', {
+        success: false,
+        error: error.message || 'Failed to send message'
+      });
+    }
+  });
+
+  // Handle conversation joining
+  socket.on('join_conversation', (data) => {
+    try {
+      console.log('👥 Join conversation request:', data);
+      socket.join(data.conversationId);
+      socket.emit('joined_conversation', {
+        success: true,
+        conversationId: data.conversationId
+      });
+    } catch (error) {
+      console.error('❌ Join conversation error:', error);
+      socket.emit('joined_conversation', {
+        success: false,
+        error: error.message
+      });
+    }
+  });
+
+  // Handle conversation leaving
+  socket.on('leave_conversation', (data) => {
+    try {
+      console.log('👋 Leave conversation request:', data);
+      socket.leave(data.conversationId);
+      socket.emit('left_conversation', {
+        success: true,
+        conversationId: data.conversationId
+      });
+    } catch (error) {
+      console.error('❌ Leave conversation error:', error);
+      socket.emit('left_conversation', {
+        success: false,
+        error: error.message
+      });
+    }
+  });
+
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log('🔌 Socket disconnected:', socket.id);
+  });
+});
 
 // Ensure logs directory exists
 const logsDir = path.join(process.cwd(), 'logs');
@@ -167,8 +409,8 @@ async function initializeDatabase() {
 
 // Initialize the database before starting the server
 initializeDatabase().then(() => {
-  const PORT = process.env.PORT || 5000;
-  const server = app.listen(PORT, () => {
+  const PORT = process.env.PORT || 8000;
+  server.listen(PORT, () => {
     console.log(`
 🚀 WhatsApp ERP Server v2.0 is running!
 ==========================================

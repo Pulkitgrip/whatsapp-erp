@@ -35,6 +35,39 @@ class MultiUserWhatsAppService {
     this.qrCodeCallbacks = new Map(); // userId -> callback function
     this.maxReconnectAttempts = parseInt(process.env.MAX_RECONNECT_ATTEMPTS) || 5;
     this.reconnectInterval = parseInt(process.env.RECONNECT_INTERVAL) || 5000;
+    this.io = null; // Socket.IO instance
+  }
+
+  // Set Socket.IO instance for real-time events
+  setSocketIO(io) {
+    this.io = io;
+  }
+
+  // Get socket ID for a user
+  getUserSocketId(userId) {
+    if (!this.io) return null;
+    
+    // Find socket by userId (you might need to store this mapping)
+    const sockets = this.io.sockets.sockets;
+    for (let [socketId, socket] of sockets) {
+      if (socket.userId === userId) {
+        return socketId;
+      }
+    }
+    return null;
+  }
+
+  // Emit real-time message event
+  emitNewMessage(userId, messageData) {
+    if (!this.io) return;
+    
+    const socketId = this.getUserSocketId(userId);
+    if (socketId) {
+      this.io.to(socketId).emit('new_message', messageData);
+      logger.info(`Emitted new_message to user ${userId} (socket: ${socketId})`);
+    } else {
+      logger.warn(`No socket found for user ${userId}`);
+    }
   }
 
   // Temporary file-based auth state (will switch to database later)
@@ -361,18 +394,24 @@ class MultiUserWhatsAppService {
         where: { mobileNo: mobileNo } 
       });
 
+      // If sender doesn't exist in database, create a temporary sender record
       if (!sender) {
-        logger.info(`Message from ${mobileNo} ignored - sender not in database (not a registered user)`);
-        return; // Only process messages from users in our database
+        logger.info(`Creating temporary sender record for ${mobileNo}`);
+        sender = {
+          id: `temp_${mobileNo}`,
+          name: `User ${mobileNo}`,
+          email: null,
+          mobileNo: mobileNo
+        };
       }
 
-      logger.info(`Processing message from registered user ${sender.name || sender.email} (${mobileNo})`);
+      logger.info(`Processing message from ${sender.name || sender.email || mobileNo} (${mobileNo})`);
 
       // Save incoming message
       await this.saveIncomingMessage(ownerId, sender.id, msg, mobileNo, messageContent);
 
-      // Process bot response only if sender is in database
-      if (messageContent !== 'Media message') {
+      // Process bot response only if sender is in database (for registered users)
+      if (messageContent !== 'Media message' && !sender.id.toString().startsWith('temp_')) {
         await this.processBotResponse(ownerId, sender.id, mobileNo, messageContent, msg.key.remoteJid);
       }
 
@@ -399,17 +438,40 @@ class MultiUserWhatsAppService {
         });
       }
 
+      // Handle temporary sender IDs (for users not in database)
+      let actualSenderId = senderId;
+      if (typeof senderId === 'string' && senderId.startsWith('temp_')) {
+        actualSenderId = null; // Set to null for temporary users
+      }
+
       // Save message
-      await Message.create({
+      const savedMessage = await Message.create({
         conversationId: conversation.id,
-        senderId: senderId,
+        senderId: actualSenderId,
         messageId: msg.key.id,
         content: content,
         messageType: 'text',
-        isOutgoing: false
+        isOutgoing: false,
+        status: 'received'
       });
 
       logger.info(`Message saved for conversation ${conversation.id}`);
+
+      // Emit real-time event for new incoming message
+      this.emitNewMessage(ownerId, {
+        type: 'incoming',
+        conversationId: conversation.id,
+        message: {
+          id: savedMessage.id,
+          content: savedMessage.content,
+          senderId: actualSenderId,
+          isOutgoing: savedMessage.isOutgoing,
+          messageType: savedMessage.messageType,
+          createdAt: savedMessage.createdAt, // Use timestamp field
+          timestamp: savedMessage.createdAt, // Also include timestamp for frontend
+          mobileNo: mobileNo
+        }
+      });
 
     } catch (error) {
       logger.error(`Error saving incoming message for owner ${ownerId}:`, error);
@@ -605,7 +667,7 @@ Example: ORDER Gaming Laptop:1`;
       
       orders.forEach((order, index) => {
         statusMessage += `${index + 1}. Order #${order.orderNumber}\n`;
-        statusMessage += `   📅 ${order.orderDate.toDateString()}\n`;
+        statusMessage += `   📅 ${order.createdAt.toDateString()}\n`;
         statusMessage += `   💰 $${order.totalAmount.toFixed(2)}\n`;
         statusMessage += `   📊 ${order.status.toUpperCase()}\n\n`;
       });
@@ -619,6 +681,7 @@ Example: ORDER Gaming Laptop:1`;
   }
 
   async sendTextMessage(userId, to, message) {
+    console.log({userId, to, message})
     const connectionData = this.connections.get(userId);
     
     if (!connectionData || !connectionData.sock || !connectionData.connectionStatus.connected) {
@@ -681,13 +744,30 @@ Example: ORDER Gaming Laptop:1`;
       }
 
       // Save outgoing message
-      await Message.create({
+      const savedMessage = await Message.create({
         conversationId: conversation.id,
         senderId: ownerId,
         messageId: messageId || `out_${Date.now()}_${Math.random()}`,
         content: content,
         messageType: 'text',
-        isOutgoing: true
+        isOutgoing: true,
+        status: 'sent'
+      });
+
+      // Emit real-time event for new outgoing message
+      this.emitNewMessage(ownerId, {
+        type: 'outgoing',
+        conversationId: conversation.id,
+        message: {
+          id: savedMessage.id,
+          content: savedMessage.content,
+          senderId: savedMessage.senderId,
+          isOutgoing: savedMessage.isOutgoing,
+          messageType: savedMessage.messageType,
+          createdAt: savedMessage.createdAt, // Use timestamp field
+          timestamp: savedMessage.createdAt, // Also include timestamp for frontend
+          mobileNo: to.replace('@s.whatsapp.net', '')
+        }
       });
 
     } catch (error) {
@@ -697,6 +777,12 @@ Example: ORDER Gaming Laptop:1`;
 
   async updateSessionStatus(userId, updates) {
     try {
+      // Skip database operations for test user (ID 1)
+      if (userId === 1) {
+        logger.info(`Skipping database update for test user ${userId}`);
+        return;
+      }
+      
       const session = await WhatsAppSession.findOne({ where: { userId } });
       if (session) {
         await session.update(updates);
@@ -898,6 +984,180 @@ Example: ORDER Gaming Laptop:1`;
       }
     }
     return activeConnections;
+  }
+
+  // Get QR code for user
+  async getQrCode(userId, forceNew = false) {
+    try {
+      logger.info(`Getting QR code for user ${userId}, forceNew: ${forceNew}`);
+      
+      // Check if user is already connected
+      const connectionData = this.connections.get(userId);
+      if (connectionData && connectionData.connectionStatus.connected) {
+        logger.info(`User ${userId} is already connected`);
+        return {
+          connected: true,
+          connectionState: 'open',
+          qrCode: null
+        };
+      }
+
+      // If forceNew is true, disconnect and reconnect
+      if (forceNew && connectionData) {
+        logger.info(`Force new QR code requested for user ${userId}`);
+        await this.disconnectUser(userId);
+      }
+
+      // Connect user if not already connected
+      if (!connectionData || !connectionData.connectionStatus.connected) {
+        await this.connectUser(userId);
+      }
+
+      // Wait a bit for QR code to be generated
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Get the updated connection data
+      const updatedConnectionData = this.connections.get(userId);
+      if (!updatedConnectionData) {
+        throw new Error(`Failed to get connection data for user ${userId}`);
+      }
+
+      // Check if QR code is available in the connection data
+      if (updatedConnectionData.qrCode || updatedConnectionData.connectionStatus.qrCode) {
+        const qrCode = updatedConnectionData.qrCode || updatedConnectionData.connectionStatus.qrCode;
+        logger.info(`QR code found for user ${userId}`);
+        return {
+          connected: false,
+          connectionState: 'waiting_for_qr',
+          qrCode: qrCode,
+          userId: userId
+        };
+      }
+
+      // If no QR code in connection data, check if we're connected
+      if (updatedConnectionData.connectionStatus.connected) {
+        return {
+          connected: true,
+          connectionState: 'open',
+          qrCode: null,
+          userId: userId
+        };
+      }
+
+      // Return waiting status
+      return {
+        connected: false,
+        connectionState: 'waiting_for_qr',
+        qrCode: null,
+        userId: userId
+      };
+    } catch (error) {
+      logger.error(`Error getting QR code for user ${userId}:`, error);
+      throw error;
+    }
+  }
+
+  // Get connection status for user
+  async getConnectionStatus(userId) {
+    try {
+      const connectionData = this.connections.get(userId);
+      if (!connectionData) {
+        return {
+          connected: false,
+          connectionState: 'disconnected',
+          userId: userId
+        };
+      }
+
+      return {
+        connected: connectionData.connectionStatus.connected,
+        connectionState: connectionData.connectionStatus.connectionState,
+        userId: userId
+      };
+    } catch (error) {
+      logger.error(`Error getting connection status for user ${userId}:`, error);
+      throw error;
+    }
+  }
+
+  // Get contacts for user
+  async getContacts(userId) {
+    try {
+      console.log({userId})
+      const connectionData = this.connections.get(userId);
+      if (!connectionData || !connectionData.connectionStatus.connected) {
+        throw new Error('User not connected to WhatsApp');
+      }
+
+      // Get all contacts from the Users table in the database
+      logger.info(`Getting all contacts from database for user ${userId}`);
+      
+      const User = require('../models/user');
+      const { Op } = require('sequelize');
+      
+      // Fetch all users from the database (excluding the current user)
+      const contacts = await User.findAll({
+        where: {
+          id: { [Op.ne]: userId }, // Exclude current user
+          mobileNo: { [Op.ne]: null } // Only users with mobile numbers
+        },
+        attributes: ['id', 'name', 'email', 'mobileNo', 'role'],
+        order: [['name', 'ASC']] // Sort by name
+      });
+      
+      // Convert to the expected format
+      const contactList = contacts.map(user => ({
+        id: `${user.mobileNo}@s.whatsapp.net`,
+        name: user.name || user.email || 'Unknown',
+        number: user.mobileNo,
+        email: user.email,
+        role: user.role,
+        pushName: user.name,
+        verifiedName: null
+      }));
+      
+      logger.info(`Found ${contactList.length} contacts from database for user ${userId}`);
+      return contactList;
+    } catch (error) {
+      logger.error(`Error getting contacts for user ${userId}:`, error);
+      throw error;
+    }
+  }
+
+  // Get messages between numbers
+  async getMessagesBetween(userId, fromNumber, toNumber, limit = 50, offset = 0) {
+    try {
+      // This would typically query the database for stored messages
+      // For now, return empty array as placeholder
+      return [];
+    } catch (error) {
+      logger.error(`Error getting messages for user ${userId}:`, error);
+      throw error;
+    }
+  }
+
+  // Send message
+  async sendMessage(userId, to, message, conversationId) {
+    try {
+      const connectionData = this.connections.get(userId);
+      if (!connectionData || !connectionData.connectionStatus.connected) {
+        throw new Error('User not connected to WhatsApp');
+      }
+
+      const result = await this.sendTextMessage(userId, to, message);
+      return {
+        success: true,
+        messageId: result,
+        to: to,
+        message: message
+      };
+    } catch (error) {
+      logger.error(`Error sending message for user ${userId}:`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
   }
 }
 
