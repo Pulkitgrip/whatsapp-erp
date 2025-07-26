@@ -166,71 +166,81 @@ router.get('/qr', authMiddleware, async (req, res) => {
         }
       });
     }
-    
-    // If force new requested or no QR available, generate fresh QR
-    if (forceNew || !status.qrCode) {
-      console.log(`Generating fresh QR code for user ${userId}`);
-      await multiUserWhatsAppService.forceNewQRCode(userId);
-      
-      // Wait for QR code generation with multiple attempts
-      const maxAttempts = 15;
-      const delayBetweenAttempts = 1000; // 1 second
-      
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts));
-        
-        const updatedStatus = await multiUserWhatsAppService.getUserConnectionStatus(userId);
-        
-        if (updatedStatus.qrCode) {
-          // Convert QR code to base64 data URL
-          const QRCode = require('qrcode');
-          const qrDataURL = await QRCode.toDataURL(updatedStatus.qrCode, {
-            width: 256,
-            margin: 2
-          });
-          
-          return res.status(200).json({
-            status: 200,
-            message: 'QR code generated successfully',
-            data: qrDataURL
-          });
+    else{
+      return res.status(200).json({
+        status: 200,
+        message: 'WhatsApp is not connected',
+        data: {
+          connected: false,
+          connectionState: status.connectionState
         }
-        
-        if (updatedStatus.connected) {
-          return res.status(200).json({
-            status: 200,
-            message: 'WhatsApp is already connected',
-            data: {
-              connected: true,
-              connectionState: updatedStatus.connectionState
-            }
-          });
-        }
-        
-        console.log(`QR code generation attempt ${attempt}/${maxAttempts} for user ${userId}`);
-      }
-      
-      // If we reach here, QR code generation failed
-      return res.status(202).json({
-        status: 202,
-        message: 'QR code generation is taking longer than expected. Please try again with ?force=true',
-        data: { timeout: true }
       });
     }
     
-    // Convert existing QR code to base64 data URL
-    const QRCode = require('qrcode');
-    const qrDataURL = await QRCode.toDataURL(status.qrCode, {
-      width: 256,
-      margin: 2
-    });
+    // // If force new requested or no QR available, generate fresh QR
+    // if (forceNew || !status.qrCode) {
+    //   console.log(`Generating fresh QR code for user ${userId}`);
+    //   await multiUserWhatsAppService.forceNewQRCode(userId);
+      
+    //   // Wait for QR code generation with multiple attempts
+    //   const maxAttempts = 15;
+    //   const delayBetweenAttempts = 1000; // 1 second
+      
+    //   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    //     await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts));
+        
+    //     const updatedStatus = await multiUserWhatsAppService.getUserConnectionStatus(userId);
+        
+    //     if (updatedStatus.qrCode) {
+    //       // Convert QR code to base64 data URL
+    //       const QRCode = require('qrcode');
+    //       const qrDataURL = await QRCode.toDataURL(updatedStatus.qrCode, {
+    //         width: 256,
+    //         margin: 2
+    //       });
+          
+    //       return res.status(200).json({
+    //         status: 200,
+    //         message: 'QR code generated successfully',
+    //         data: qrDataURL
+    //       });
+    //     }
+        
+    //     if (updatedStatus.connected) {
+    //       return res.status(200).json({
+    //         status: 200,
+    //         message: 'WhatsApp is already connected',
+    //         data: {
+    //           connected: true,
+    //           connectionState: updatedStatus.connectionState
+    //         }
+    //       });
+    //     }
+        
+    //     console.log(`QR code generation attempt ${attempt}/${maxAttempts} for user ${userId}`);
+    //   }
+      
+    //   // If we reach here, QR code generation failed
+    //   return res.status(202).json({
+    //     status: 202,
+    //     message: 'QR code generation is taking longer than expected. Please try again with ?force=true',
+    //     data: { timeout: true }
+    //   });
+    // }
     
-    // Return only the base64 data
-    return res.status(200).json({
-      status: 200,
-      message: 'QR code retrieved successfully',
-      data: qrDataURL
-    });
+    // // Convert existing QR code to base64 data URL
+    // const QRCode = require('qrcode');
+    // const qrDataURL = await QRCode.toDataURL(status.qrCode, {
+    //   width: 256,
+    //   margin: 2
+    // });
+    
+    // // Return only the base64 data
+    // return res.status(200).json({
+    //   status: 200,
+    //   message: 'QR code retrieved successfully',
+    //   data: qrDataURL
+    // });
     
   } catch (error) {
     console.error(`Error getting QR code for user ${userId}:`, error);

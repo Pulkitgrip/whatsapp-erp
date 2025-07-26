@@ -8,6 +8,7 @@ const categoryRoutes = require('./category');
 const whatsappRoutes = require('./whatsapp');
 const userRoutes = require('./user');
 const customerRoutes = require('./customer');
+const sentimentRoutes = require('./sentiment');
 
 // Health check for individual route groups
 router.get('/health', (req, res) => {
@@ -19,7 +20,8 @@ router.get('/health', (req, res) => {
       auth: '/api/auth/*',
       products: '/api/products',
       categories: '/api/categories',
-      whatsapp: '/api/whatsapp/*'
+      whatsapp: '/api/whatsapp/*',
+      sentiment: '/api/sentiment/*'
     }
   });
 });
@@ -31,6 +33,7 @@ router.use('/categories', categoryRoutes);
 router.use('/whatsapp', whatsappRoutes);
 router.use('/users', userRoutes);
 router.use('/customers', customerRoutes);
+router.use('/sentiment', sentimentRoutes);
 
 // API documentation
 router.get('/', (req, res) => {
@@ -86,13 +89,22 @@ router.get('/', (req, res) => {
           admin: {
             'GET /api/whatsapp/sessions/active': 'Get all active sessions (admin only)'
           }
+        },
+        sentiment: {
+          'GET /api/sentiment/info': 'Get n8n workflow information',
+          'GET /api/sentiment/health': 'Check n8n service health',
+          'POST /api/sentiment/analyze': 'Analyze sentiment for conversation/content (requires auth)',
+          'POST /api/sentiment/trigger': 'Trigger n8n workflow with custom data (requires auth)',
+          'POST /api/sentiment/analyze-between': 'Analyze sentiment between two phone numbers (requires auth)'
         }
       },
       notes: [
         'All WhatsApp endpoints require JWT authentication',
         'Messages are only stored from contacts in the database',
         'Each user maintains their own WhatsApp connection',
-        'Auth data is stored in database for Vercel compatibility'
+        'Auth data is stored in database for Vercel compatibility',
+        'Sentiment analysis endpoints integrate with n8n workflow',
+        'Configure N8N_BASE_URL environment variable for n8n instance'
       ]
     },
     timestamp: Date.now()
