@@ -46,7 +46,6 @@ const Conversation = sequelize.define('Conversation', {
   whatsappChatId: {
     type: DataTypes.STRING,
     allowNull: false,
-    unique: true,
   },
   conversationType: {
     type: DataTypes.STRING,
@@ -64,7 +63,15 @@ const Conversation = sequelize.define('Conversation', {
     type: DataTypes.INTEGER,
     allowNull: true, // The user who owns this WhatsApp account
   },
-}, { timestamps: true });
+}, { 
+  timestamps: true,
+  indexes: [
+    {
+      unique: true,
+      fields: ['whatsappChatId', 'ownerId']
+    }
+  ]
+});
 
 // WhatsApp Messages Model
 const Message = sequelize.define('Message', {

@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { addUser, getUsers, updateUser, deleteUser, getUserById } = require('../controllers/userController');
+const { addUser, getUsers, updateUser, deleteUser, getMe ,getUserById} = require('../controllers/userController');
 const authMiddleware = require('../middleware/authMiddleware');
 const roleMiddleware = require('../middleware/roleMiddleware');
 
 // Apply auth middleware to all user routes
 router.use(authMiddleware);
 
+router.get('/me', getMe);
 router.get('/', getUsers);
 router.post('/', roleMiddleware(['admin']), addUser);
 router.get('/:id', roleMiddleware(['admin']), getUserById);

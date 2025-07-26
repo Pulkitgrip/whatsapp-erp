@@ -1,0 +1,273 @@
+{
+  "name": "Sentiment Analysis - Phone Numbers",
+  "nodes": [
+    {
+      "parameters": {
+        "inputText": "={{ $json.combinedContent }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.sentimentAnalysis",
+      "typeVersion": 1,
+      "position": [
+        580,
+        80
+      ],
+      "id": "30a4c774-358e-4ffb-9940-71e5fc2d8db8",
+      "name": "Sentiment Analysis"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        668,
+        300
+      ],
+      "id": "a3944d21-2e73-4b36-afd9-fe5c54910218",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "sjEexXzyzTMU3kpW",
+          "name": "Google Gemini(PaLM) Api account - dogwood-flames-456112-n3"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        -120
+      ],
+      "id": "c5acf5b9-7a89-404d-9f50-9879c39ffe25",
+      "name": "Positive Sentiment"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        80
+      ],
+      "id": "fc99e1d9-c5ee-4db6-9952-1ada96380a9b",
+      "name": "Neutral Sentiment"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        280
+      ],
+      "id": "8e88ea1d-c645-479a-a64c-ddb8e7cb198c",
+      "name": "Negative Sentiment"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "152a82cd-717b-4e5c-b8b6-d8ef71f82c1c",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        80
+      ],
+      "id": "8f97c212-1cdb-4f00-b1d3-290c60e79562",
+      "name": "Webhook",
+      "webhookId": "152a82cd-717b-4e5c-b8b6-d8ef71f82c1c"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process the incoming payload from the API\nconst payload = $input.first().json;\n\n// Extract information sent by the API\nconst fromNumber = payload.from;\nconst toNumber = payload.to;\nconst messageCount = payload.messageCount;\nconst messages = payload.messages || [];\nconst combinedContent = payload.combinedContent;\nconst userId = payload.userId;\n\n// Log the received data\nconsole.log(`Processing sentiment analysis for conversation between ${fromNumber} and ${toNumber}`);\nconsole.log(`Total messages: ${messageCount}`);\nconsole.log(`User ID: ${userId}`);\n\n// Return the data for sentiment analysis\nreturn [{\n  from: fromNumber,\n  to: toNumber,\n  messageCount: messageCount,\n  combinedContent: combinedContent,\n  messages: messages,\n  userId: userId,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        80
+      ],
+      "id": "0a21dc95-e27d-46c9-8e4c-81f9ad80c3c9",
+      "name": "Process API Data"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "26b81231-1daa-44f1-953f-9c2f0f94bd60",
+              "leftValue": "={{ $json.combinedContent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "id": "validation-check",
+              "leftValue": "={{ $json.messageCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        140,
+        80
+      ],
+      "id": "0288280e-5431-45e7-b068-543ad6b208bd",
+      "name": "Validate Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the sentiment analysis result from the Sentiment Analysis node\nconst sentimentData = $('Sentiment Analysis').first().json;\n\n// Extract the original data passed through\nconst originalData = $('Process API Data').first().json;\n\n// Determine which sentiment path we're on\nlet sentimentType = 'unknown';\nif ($input.first().constructor.name === 'NodeExecutionOutput') {\n  // Check which node we came from\n  const inputNodeName = $input.first().nodeName || '';\n  if (inputNodeName.includes('Positive')) {\n    sentimentType = 'positive';\n  } else if (inputNodeName.includes('Neutral')) {\n    sentimentType = 'neutral';\n  } else if (inputNodeName.includes('Negative')) {\n    sentimentType = 'negative';\n  }\n}\n\n// Format the final response\nconst response = {\n  success: true,\n  analysis: {\n    from: originalData.from,\n    to: originalData.to,\n    messageCount: originalData.messageCount,\n    sentiment: sentimentType,\n    confidence: sentimentData.confidence || 0.8,\n    score: sentimentData.score || sentimentData.sentiment || sentimentType,\n    details: sentimentData,\n    timestamp: new Date().toISOString()\n  },\n  metadata: {\n    userId: originalData.userId,\n    processedAt: new Date().toISOString(),\n    workflowVersion: '2.1',\n    executionPath: sentimentType\n  }\n};\n\nconsole.log(`Sentiment analysis completed via ${sentimentType} path:`, JSON.stringify(response, null, 2));\n\nreturn [response];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        80
+      ],
+      "id": "response-formatter",
+      "name": "Format Response"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Sentiment Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sentiment Analysis": {
+      "main": [
+        [
+          {
+            "node": "Positive Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Neutral Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Negative Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Positive Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Neutral Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negative Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process API Data": {
+      "main": [
+        [
+          {
+            "node": "Sentiment Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Process API Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "updated-sentiment-workflow-final",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e5fc7d7eb6d62cc22df79bd6a7e967106a680ad22946a1a6bf7101270f9da202"
+  },
+  "id": "AykSUtEeritJmyXD",
+  "tags": ["sentiment-analysis", "whatsapp", "phone-numbers", "final-version"]
+} 
