@@ -5,7 +5,6 @@ const errorHandler = require('./middleware/errorHandler');
 const createError = require('http-errors');
 const fs = require('fs');
 const path = require('path');
-const indexRoutes = require('./routes/index');
 
 const app = express();
 
@@ -46,11 +45,8 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Import routes
-const authRoutes = require('./routes/auth'); // Use our fixed auth router
-const productRoutes = require('./routes/product');
-const categoryRoutes = require('./routes/category');
 const whatsappRoutes = require('./routes/whatsapp');
-
+const indexRoutes = require('./routes/index');
 // Import services
 const sessionCleanupService = require('./services/sessionCleanupService');
 
@@ -58,7 +54,7 @@ const sessionCleanupService = require('./services/sessionCleanupService');
 // app.use('/api/auth', authRoutes);
 // app.use('/api/products', productRoutes);
 // app.use('/api/categories', categoryRoutes);
-app.use('/api', indexRoutes);
+app.use('/api/', indexRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 
 // Health check endpoint

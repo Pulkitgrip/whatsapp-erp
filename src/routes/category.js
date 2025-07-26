@@ -10,7 +10,7 @@ router.get('/', categoryController.getCategories);
 
 router.use(requireRole(['admin']));
 router.post('/', categoryController.createCategory);
-// router.get('/:id', categoryController.getCategoryById);
+router.get('/:id', categoryController.getCategoryById);
 router.patch('/:id', categoryController.updateCategory);
 router.delete('/:id', categoryController.deleteCategory);
 

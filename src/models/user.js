@@ -32,6 +32,11 @@ const User = sequelize.define('User', {
   resetToken: {
     type: DataTypes.STRING,
   },
+  location: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+
 });
 
 module.exports = User; 

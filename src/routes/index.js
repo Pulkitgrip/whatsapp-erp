@@ -9,6 +9,8 @@ const whatsappRoutes = require('./whatsapp');
 const userRoutes = require('./user');
 const customerRoutes = require('./customer');
 const sentimentRoutes = require('./sentiment');
+const stockRoutes = require('./stock');
+const orderRoutes = require('./order');
 
 // Health check for individual route groups
 router.get('/health', (req, res) => {
@@ -21,7 +23,9 @@ router.get('/health', (req, res) => {
       products: '/api/products',
       categories: '/api/categories',
       whatsapp: '/api/whatsapp/*',
-      sentiment: '/api/sentiment/*'
+      sentiment: '/api/sentiment/*',
+      stocks: '/api/stocks/*',
+      orders: '/api/orders/*'
     }
   });
 });
@@ -34,6 +38,8 @@ router.use('/whatsapp', whatsappRoutes);
 router.use('/users', userRoutes);
 router.use('/customers', customerRoutes);
 router.use('/sentiment', sentimentRoutes);
+router.use('/stocks', stockRoutes);
+router.use('/orders', orderRoutes);
 
 // API documentation
 router.get('/', (req, res) => {
