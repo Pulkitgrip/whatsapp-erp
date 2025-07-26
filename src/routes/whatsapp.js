@@ -1223,4 +1223,41 @@ router.post('/test-incoming-message', authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * GET /whatsapp/test-connection
+ * Test endpoint to check WhatsApp connection status
+ */
+router.get('/test-connection', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    console.log('Testing WhatsApp connection for user:', userId);
+
+    const whatsappService = require('../services/whatsappMultiUserService');
+    
+    // Get connection status
+    const connectionStatus = await whatsappService.getUserConnectionStatus(userId);
+    console.log('Connection status:', connectionStatus);
+    
+    // Get active connections
+    const activeConnections = whatsappService.getActiveConnections();
+    console.log('Active connections:', activeConnections);
+    
+    res.json({
+      success: true,
+      data: {
+        userId,
+        connectionStatus,
+        activeConnections,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error testing connection:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;

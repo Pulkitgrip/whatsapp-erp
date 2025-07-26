@@ -54,28 +54,48 @@ class MultiUserWhatsAppService {
 
   // Get socket ID for a user
   getUserSocketId(userId) {
-    if (!this.io) return null;
+    if (!this.io) {
+      logger.warn(`No Socket.IO instance available for getUserSocketId`);
+      return null;
+    }
     
-    // Find socket by userId (you might need to store this mapping)
+    logger.info(`Looking for socket ID for user ${userId}`);
+    
+    // Find socket by userId
     const sockets = this.io.sockets.sockets;
+    logger.info(`Total connected sockets: ${sockets.size}`);
+    
     for (let [socketId, socket] of sockets) {
+      logger.info(`Checking socket ${socketId}, userId: ${socket.userId}`);
       if (socket.userId === userId) {
+        logger.info(`✅ Found socket ${socketId} for user ${userId}`);
         return socketId;
       }
     }
+    
+    logger.warn(`❌ No socket found for user ${userId}`);
     return null;
   }
 
   // Emit real-time message event
   emitNewMessage(userId, messageData) {
-    if (!this.io) return;
+    logger.info(`Attempting to emit new message for user ${userId}:`, messageData);
+    
+    if (!this.io) {
+      logger.warn(`No Socket.IO instance available for user ${userId}`);
+      return;
+    }
     
     const socketId = this.getUserSocketId(userId);
+    logger.info(`Socket ID for user ${userId}: ${socketId}`);
+    
     if (socketId) {
       this.io.to(socketId).emit('new_message', messageData);
-      logger.info(`Emitted new_message to user ${userId} (socket: ${socketId})`);
+      logger.info(`✅ Successfully emitted new_message to user ${userId} (socket: ${socketId})`);
     } else {
-      logger.warn(`No socket found for user ${userId}`);
+      logger.warn(`❌ No socket found for user ${userId}, trying to emit to all sockets`);
+      // Fallback: emit to all sockets for this user
+      this.io.emit('new_message', messageData);
     }
   }
 
@@ -381,13 +401,13 @@ class MultiUserWhatsAppService {
 
     // Handle messages with improved logging and error handling
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      logger.info(`Received messages.upsert event for user ${userId}: ${messages.length} messages, type: ${type}`);
+      logger.info(`🔔 Received messages.upsert event for user ${userId}: ${messages.length} messages, type: ${type}`);
       
       try {
         for (const msg of messages) {
           // Skip messages without key or message content
           if (!msg.key) {
-            logger.warn(`Skipping message without key for user ${userId}`);
+            logger.warn(`⚠️ Skipping message without key for user ${userId}`);
             continue;
           }
           
@@ -396,16 +416,18 @@ class MultiUserWhatsAppService {
           const isFromMe = msg.key.fromMe || false;
           const hasContent = !!msg.message;
           
-          logger.info(`Message details: from=${from}, fromMe=${isFromMe}, hasContent=${hasContent}, messageType=${msg.message ? Object.keys(msg.message)[0] : 'none'}`);
+          logger.info(`📝 Message details: from=${from}, fromMe=${isFromMe}, hasContent=${hasContent}, messageType=${msg.message ? Object.keys(msg.message)[0] : 'none'}`);
           
           // Process only incoming messages with content
           if (!isFromMe && hasContent) {
-            logger.info(`Processing incoming message from ${from} for user ${userId}`);
+            logger.info(`🎯 Processing incoming message from ${from} for user ${userId}`);
             await this.handleIncomingMessage(userId, msg);
+          } else {
+            logger.info(`⏭️ Skipping message: fromMe=${isFromMe}, hasContent=${hasContent}`);
           }
         }
       } catch (error) {
-        logger.error(`Error processing messages for user ${userId}:`, {
+        logger.error(`❌ Error processing messages for user ${userId}:`, {
           error: error.message,
           stack: error.stack
         });
@@ -428,32 +450,30 @@ class MultiUserWhatsAppService {
       
       logger.info(`Received message from ${mobileNo} to user ${ownerId}: ${messageContent}`);
 
-      // Always save incoming message regardless of sender
-      let senderId = null;
-      
       // Try to find sender in our database
       let sender = await User.findOne({ 
         where: { mobileNo: mobileNo } 
       });
 
-      // If sender doesn't exist in database, create a temporary sender record
-      if (!sender) {
-        logger.info(`Creating temporary sender record for ${mobileNo}`);
-        sender = {
-          id: `temp_${mobileNo}`,
-          name: `User ${mobileNo}`,
-          email: null,
-          mobileNo: mobileNo
-        };
+      let senderId = null;
+      let senderName = `User ${mobileNo}`;
+
+      // If sender exists in database, use their ID
+      if (sender) {
+        senderId = sender.id;
+        senderName = sender.name || sender.email || `User ${mobileNo}`;
+        logger.info(`Found registered sender: ${senderName} (ID: ${senderId})`);
+      } else {
+        logger.info(`Sender ${mobileNo} not found in database, will save as external user`);
       }
 
-      logger.info(`Processing message from ${sender.name || sender.email || mobileNo} (${mobileNo})`);
+      logger.info(`Processing message from ${senderName} (${mobileNo})`);
 
       // Save incoming message
       await this.saveIncomingMessage(ownerId, senderId, msg, mobileNo, messageContent);
 
       // Process bot response only if sender is in database (for registered users)
-      if (messageContent !== 'Media message' && !sender.id.toString().startsWith('temp_')) {
+      if (messageContent !== 'Media message' && sender) {
         await this.processBotResponse(ownerId, sender.id, mobileNo, messageContent, msg.key.remoteJid);
       }
 
@@ -672,42 +692,31 @@ class MultiUserWhatsAppService {
         actualSenderId = null; // Set to null for temporary users
       }
 
-      // Save message
-      const savedMessage = await Message.create({
-        conversationId: conversation.id,
-        senderId: actualSenderId,
-        messageId: msg.key.id,
-        content: content,
-        messageType: 'text',
-        isOutgoing: false,
-        status: 'received'
-      });
-
-      if (conversationCreated) {
-        logger.info(`Created new conversation ${conversation.id} for ${msg.key.remoteJid} (owner: ${ownerId})`);
-      }
-
-      // Use findOrCreate for messages too to avoid duplicates in case of retries
+      // Use findOrCreate for messages to avoid duplicates in case of retries
       const [message, messageCreated] = await Message.findOrCreate({
         where: {
           messageId: msg.key.id
         },
         defaults: {
           conversationId: conversation.id,
-          senderId: senderId,
+          senderId: actualSenderId,
           messageId: msg.key.id,
           content: truncatedContent || '',
           messageType: 'text',
-          isOutgoing: false
+          isOutgoing: false,
+          status: 'received'
         }
       });
+
+      if (conversationCreated) {
+        logger.info(`Created new conversation ${conversation.id} for ${msg.key.remoteJid} (owner: ${ownerId})`);
+      }
 
       if (messageCreated) {
         logger.info(`Message saved for conversation ${conversation.id}`);
         
         // Emit socket event for real-time message delivery
         try {
-          const socketSvc = getSocketService();
           const messageData = {
             id: message.id,
             messageId: message.messageId,
@@ -722,33 +731,14 @@ class MultiUserWhatsAppService {
             } : null
           };
           
-          // Emit to user's room for real-time updates
-          socketSvc.emitNewMessage(ownerId, messageData);
+          // Use the class's emitNewMessage method
+          this.emitNewMessage(ownerId, messageData);
           
-          // Also emit to conversation room if anyone is listening
-          socketSvc.emitToConversation(conversation.id, 'new_message', messageData);
-          
-          logger.info(`Socket events emitted for new message to user ${ownerId}`);
+          logger.info(`✅ Socket event emitted for new message to user ${ownerId}`);
         } catch (socketError) {
-          logger.error('Error emitting socket events for new message:', socketError);
+          logger.error('❌ Error emitting socket events for new message:', socketError);
         }
       }
-
-      // Emit real-time event for new incoming message
-      this.emitNewMessage(ownerId, {
-        type: 'incoming',
-        conversationId: conversation.id,
-        message: {
-          id: savedMessage.id,
-          content: savedMessage.content,
-          senderId: actualSenderId,
-          isOutgoing: savedMessage.isOutgoing,
-          messageType: savedMessage.messageType,
-          createdAt: savedMessage.createdAt, // Use timestamp field
-          timestamp: savedMessage.createdAt, // Also include timestamp for frontend
-          mobileNo: mobileNo
-        }
-      });
 
     } catch (error) {
       logger.error(`Error saving incoming message for owner ${ownerId}:`, {
