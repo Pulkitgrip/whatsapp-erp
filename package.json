@@ -42,10 +42,7 @@
     "qrcode-terminal": "^0.12.0",
     "sequelize": "^6.37.7",
     "socket.io": "^4.8.1",
-<<<<<<< HEAD
     "socket.io-client": "^4.8.1",
-=======
->>>>>>> 16eea7a29689975b0569d4b78a32c15c42427419
     "sqlite3": "^5.1.7",
     "winston": "^3.17.0"
   },
