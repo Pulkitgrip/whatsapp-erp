@@ -25,7 +25,8 @@ const corsOptions = {
       'http://localhost:5173',
       'https://erp-whatsapp.vercel.app',
       'http://localhost:3000',
-      'http://localhost:3001'
+      'http://localhost:3001',
+      'http://localhost:8000'
     ];
     
     if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
@@ -167,13 +168,23 @@ async function initializeDatabase() {
 
 // Initialize the database before starting the server
 initializeDatabase().then(() => {
-  const PORT = process.env.PORT || 5000;
-  const server = app.listen(PORT, () => {
+  const PORT = process.env.PORT;
+  const http = require('http');
+  const socketService = require('./services/socketService');
+  
+  // Create HTTP server
+  const server = http.createServer(app);
+  
+  // Initialize Socket.IO
+  socketService.initialize(server);
+  
+  server.listen(PORT, () => {
     console.log(`
 🚀 WhatsApp ERP Server v2.0 is running!
 ==========================================
 📡 Server: http://localhost:${PORT}
 📖 API Documentation: http://localhost:${PORT}/
+🔌 Socket.IO: http://localhost:${PORT}/socket.io
 �� Health Check: http://localhost:${PORT}/health
 
 📝 Multi-User WhatsApp Features:

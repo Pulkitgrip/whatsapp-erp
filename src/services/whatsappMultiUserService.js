@@ -15,6 +15,15 @@ const { WhatsAppSession, Conversation, Message, BotResponse, Order, OrderItem } 
 const Product = require('../models/product');
 const User = require('../models/user');
 
+// Import socket service (lazy loading to avoid circular dependency)
+let socketService = null;
+const getSocketService = () => {
+  if (!socketService) {
+    socketService = require('./socketService');
+  }
+  return socketService;
+};
+
 // Configure logger
 const logger = winston.createLogger({
   level: 'info',
@@ -101,9 +110,9 @@ class MultiUserWhatsAppService {
           creds: state.creds,
           keys: makeCacheableSignalKeyStore(state.keys) // Remove pino logger like in working example
         },
-        // Use exact browser config from working example
-        browser: ['WhatsApp Bot API', 'Chrome', '10.0'],
-        syncFullHistory: false,
+        // Use desktop browser config for better history sync like documentation suggests
+        browser: ['WhatsApp Bot', 'Desktop', '1.0'],
+        syncFullHistory: true, // Enable full history sync
         markOnlineOnConnect: true, // Set to true like working example
         logger: pino({ level: 'silent' }),
         shouldIgnoreJid: jid => !jid.includes('@s.whatsapp.net'),
@@ -337,13 +346,43 @@ class MultiUserWhatsAppService {
       }
     });
 
-    // Handle messages
-    sock.ev.on("messages.upsert", async ({ messages }) => {
-      for (const msg of messages) {
-        if (!msg.key.fromMe && msg.message) {
-          await this.handleIncomingMessage(userId, msg);
+    // Handle messages with improved logging and error handling
+    sock.ev.on("messages.upsert", async ({ messages, type }) => {
+      logger.info(`Received messages.upsert event for user ${userId}: ${messages.length} messages, type: ${type}`);
+      
+      try {
+        for (const msg of messages) {
+          // Skip messages without key or message content
+          if (!msg.key) {
+            logger.warn(`Skipping message without key for user ${userId}`);
+            continue;
+          }
+          
+          // Log all incoming messages for debugging
+          const from = msg.key.remoteJid || 'unknown';
+          const isFromMe = msg.key.fromMe || false;
+          const hasContent = !!msg.message;
+          
+          logger.info(`Message details: from=${from}, fromMe=${isFromMe}, hasContent=${hasContent}, messageType=${msg.message ? Object.keys(msg.message)[0] : 'none'}`);
+          
+          // Process only incoming messages with content
+          if (!isFromMe && hasContent) {
+            logger.info(`Processing incoming message from ${from} for user ${userId}`);
+            await this.handleIncomingMessage(userId, msg);
+          }
         }
+      } catch (error) {
+        logger.error(`Error processing messages for user ${userId}:`, {
+          error: error.message,
+          stack: error.stack
+        });
       }
+    });
+
+    // Handle history sync for new connections
+    sock.ev.on("messaging-history.set", async ({ messages, isLatest }) => {
+      logger.info(`Received message history for user ${userId}: ${messages.length} messages, isLatest: ${isLatest}`);
+      await this.processHistoryMessages(userId, messages);
     });
   }
 
@@ -356,92 +395,362 @@ class MultiUserWhatsAppService {
       
       logger.info(`Received message from ${mobileNo} to user ${ownerId}: ${messageContent}`);
 
-      // Check if sender exists in our database by phone number
+      // Always save incoming message regardless of sender
+      let senderId = null;
+      
+      // Try to find sender in our database
       let sender = await User.findOne({ 
         where: { mobileNo: mobileNo } 
       });
 
-      if (!sender) {
-        logger.info(`Message from ${mobileNo} ignored - sender not in database (not a registered user)`);
-        return; // Only process messages from users in our database
+      if (sender) {
+        senderId = sender.id;
+        logger.info(`Processing message from registered user ${sender.name || sender.email} (${mobileNo})`);
+      } else {
+        logger.info(`Message from ${mobileNo} - sender not in database but will be processed`);
+        
+        // Create a temporary user record for this sender
+        try {
+          sender = await User.create({
+            name: `WhatsApp User ${mobileNo}`,
+            email: `${mobileNo}@whatsapp.temp`,
+            mobileNo: mobileNo,
+            role: 'customer'
+          });
+          senderId = sender.id;
+          logger.info(`Created temporary user for ${mobileNo} with ID ${senderId}`);
+        } catch (userError) {
+          logger.warn(`Could not create temporary user for ${mobileNo}: ${userError.message}`);
+        }
       }
 
-      logger.info(`Processing message from registered user ${sender.name || sender.email} (${mobileNo})`);
-
       // Save incoming message
-      await this.saveIncomingMessage(ownerId, sender.id, msg, mobileNo, messageContent);
+      await this.saveIncomingMessage(ownerId, senderId, msg, mobileNo, messageContent);
 
-      // Process bot response only if sender is in database
+      // Process bot response for all messages
       if (messageContent !== 'Media message') {
-        await this.processBotResponse(ownerId, sender.id, mobileNo, messageContent, msg.key.remoteJid);
+        await this.processBotResponse(ownerId, senderId, mobileNo, messageContent, msg.key.remoteJid);
       }
 
     } catch (error) {
-      logger.error(`Error handling incoming message for user ${ownerId}:`, error);
+      logger.error(`Error handling incoming message for user ${ownerId}:`, {
+        error: error.message,
+        stack: error.stack
+      });
+    }
+  }
+
+  // Helper function to validate mobile number format
+  isValidMobileNumber(phoneNumber) {
+    if (!phoneNumber) return false;
+    
+    // Check if it's in international format (+country_code followed by number)
+    // Example: +919712323801
+    const internationalFormat = /^\+\d{10,15}$/;
+    return internationalFormat.test(phoneNumber);
+  }
+
+  // Helper function to normalize phone number for WhatsApp
+  normalizePhoneNumber(phoneNumber) {
+    if (!phoneNumber) return null;
+    
+    // Remove + sign and any spaces
+    return phoneNumber.replace(/^\+/, '').replace(/\s/g, '');
+  }
+
+  // Process historical messages on first connection
+  async processHistoryMessages(ownerId, messages) {
+    try {
+      logger.info(`Processing ${messages.length} historical messages for user ${ownerId}`);
+      
+      // Get all users with valid mobile numbers from database
+      const usersWithMobile = await User.findAll({
+        where: {
+          mobileNo: {
+            [require('sequelize').Op.ne]: null
+          }
+        },
+        attributes: ['id', 'mobileNo', 'name', 'email']
+      });
+
+      // Create a map of normalized phone numbers to user objects for quick lookup
+      const phoneToUserMap = new Map();
+      for (const user of usersWithMobile) {
+        if (this.isValidMobileNumber(user.mobileNo)) {
+          const normalizedPhone = this.normalizePhoneNumber(user.mobileNo);
+          phoneToUserMap.set(normalizedPhone, user);
+        }
+      }
+
+      logger.info(`Found ${phoneToUserMap.size} users with valid mobile numbers`);
+
+      let processedCount = 0;
+      let filteredCount = 0;
+
+      for (const msg of messages) {
+        try {
+          // Skip group messages for now
+          if (msg.key.remoteJid.includes('@g.us')) {
+            continue;
+          }
+
+          // Extract phone number from JID
+          const phoneFromJid = msg.key.remoteJid.replace('@s.whatsapp.net', '');
+          
+          // Check if this phone number exists in our users table
+          const user = phoneToUserMap.get(phoneFromJid);
+          
+          if (user) {
+            // Extract message content
+            const messageContent = msg.message?.conversation || 
+                                 msg.message?.extendedTextMessage?.text || 
+                                 'Media message';
+
+            // Save historical message
+            await this.saveHistoricalMessage(ownerId, user.id, msg, phoneFromJid, messageContent);
+            processedCount++;
+          } else {
+            filteredCount++;
+          }
+        } catch (error) {
+          logger.error(`Error processing individual historical message:`, error);
+        }
+      }
+
+      logger.info(`Historical message processing complete for user ${ownerId}: ${processedCount} saved, ${filteredCount} filtered out`);
+
+    } catch (error) {
+      logger.error(`Error processing historical messages for user ${ownerId}:`, error);
+    }
+  }
+
+  // Save historical message (similar to saveIncomingMessage but for history)
+  async saveHistoricalMessage(ownerId, senderId, msg, mobileNo, content) {
+    try {
+      // Validate required data
+      if (!msg.key?.id) {
+        logger.warn(`Skipping message without ID for owner ${ownerId}`);
+        return;
+      }
+
+      if (!msg.key?.remoteJid) {
+        logger.warn(`Skipping message without remoteJid for owner ${ownerId}`);
+        return;
+      }
+
+      // Ensure senderId is valid
+      if (!senderId || senderId === null) {
+        logger.warn(`Skipping message with invalid senderId for owner ${ownerId}, messageId: ${msg.key.id}`);
+        return;
+      }
+
+      // Truncate content if too long (database field might have limits)
+      const truncatedContent = content && content.length > 1000 ? content.substring(0, 1000) + '...' : content;
+
+      // Use findOrCreate to handle race conditions
+      const [conversation, conversationCreated] = await Conversation.findOrCreate({
+        where: { 
+          whatsappChatId: msg.key.remoteJid,
+          ownerId: ownerId 
+        },
+        defaults: {
+          whatsappChatId: msg.key.remoteJid,
+          ownerId: ownerId,
+          isGroup: msg.key.remoteJid.includes('@g.us'),
+          conversationType: msg.key.remoteJid.includes('@g.us') ? 'group' : 'individual'
+        }
+      });
+
+      if (conversationCreated) {
+        logger.debug(`Created new conversation ${conversation.id} for ${msg.key.remoteJid} (owner: ${ownerId})`);
+      }
+
+      // Create valid timestamp
+      let messageTimestamp = new Date();
+      if (msg.messageTimestamp && !isNaN(msg.messageTimestamp)) {
+        messageTimestamp = new Date(msg.messageTimestamp * 1000);
+        // Validate timestamp is reasonable (not in future, not too old)
+        const now = new Date();
+        const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        if (messageTimestamp > now || messageTimestamp < oneYearAgo) {
+          messageTimestamp = new Date(); // fallback to current time
+        }
+      }
+
+      // Use findOrCreate for messages too to avoid duplicates
+      const [message, messageCreated] = await Message.findOrCreate({
+        where: {
+          messageId: msg.key.id
+        },
+        defaults: {
+          conversationId: conversation.id,
+          senderId: senderId,
+          messageId: msg.key.id,
+          content: truncatedContent || '',
+          messageType: 'text',
+          isOutgoing: msg.key.fromMe || false,
+          createdAt: messageTimestamp,
+          updatedAt: messageTimestamp
+        }
+      });
+
+      if (messageCreated) {
+        logger.debug(`Historical message saved for conversation ${conversation.id} from ${mobileNo}`);
+      }
+
+    } catch (error) {
+      logger.error(`Error saving historical message for owner ${ownerId}:`, {
+        message: error.message,
+        name: error.name,
+        code: error.code,
+        constraint: error.original?.constraint,
+        detail: error.original?.detail,
+        messageId: msg.key.id,
+        remoteJid: msg.key.remoteJid,
+        senderId: senderId
+      });
     }
   }
 
   async saveIncomingMessage(ownerId, senderId, msg, mobileNo, content) {
     try {
-      // Get or create conversation for this owner
-      let conversation = await Conversation.findOne({ 
+      // Validate required data
+      if (!msg.key?.remoteJid) {
+        logger.warn(`Missing remoteJid in message for owner ${ownerId}`);
+        return;
+      }
+
+      if (!msg.key?.id) {
+        logger.warn(`Missing message ID in message for owner ${ownerId}`);
+        return;
+      }
+
+      // Truncate content if too long
+      const truncatedContent = content && content.length > 1000 ? content.substring(0, 1000) + '...' : content;
+
+      // Use findOrCreate to handle race conditions
+      const [conversation, conversationCreated] = await Conversation.findOrCreate({
         where: { 
           whatsappChatId: msg.key.remoteJid,
           ownerId: ownerId 
-        } 
-      });
-      
-      if (!conversation) {
-        conversation = await Conversation.create({
+        },
+        defaults: {
           whatsappChatId: msg.key.remoteJid,
           ownerId: ownerId,
-          isGroup: msg.key.remoteJid.includes('@g.us')
-        });
-      }
-
-      // Save message
-      await Message.create({
-        conversationId: conversation.id,
-        senderId: senderId,
-        messageId: msg.key.id,
-        content: content,
-        messageType: 'text',
-        isOutgoing: false
+          isGroup: msg.key.remoteJid.includes('@g.us'),
+          conversationType: msg.key.remoteJid.includes('@g.us') ? 'group' : 'individual'
+        }
       });
 
-      logger.info(`Message saved for conversation ${conversation.id}`);
+      if (conversationCreated) {
+        logger.info(`Created new conversation ${conversation.id} for ${msg.key.remoteJid} (owner: ${ownerId})`);
+      }
+
+      // Use findOrCreate for messages too to avoid duplicates in case of retries
+      const [message, messageCreated] = await Message.findOrCreate({
+        where: {
+          messageId: msg.key.id
+        },
+        defaults: {
+          conversationId: conversation.id,
+          senderId: senderId,
+          messageId: msg.key.id,
+          content: truncatedContent || '',
+          messageType: 'text',
+          isOutgoing: false
+        }
+      });
+
+      if (messageCreated) {
+        logger.info(`Message saved for conversation ${conversation.id}`);
+        
+        // Emit socket event for real-time message delivery
+        try {
+          const socketSvc = getSocketService();
+          const messageData = {
+            id: message.id,
+            messageId: message.messageId,
+            content: message.content,
+            messageType: message.messageType,
+            isOutgoing: message.isOutgoing,
+            createdAt: message.createdAt,
+            conversationId: conversation.id,
+            sender: senderId ? {
+              id: senderId,
+              mobileNo: mobileNo
+            } : null
+          };
+          
+          // Emit to user's room for real-time updates
+          socketSvc.emitNewMessage(ownerId, messageData);
+          
+          // Also emit to conversation room if anyone is listening
+          socketSvc.emitToConversation(conversation.id, 'new_message', messageData);
+          
+          logger.info(`Socket events emitted for new message to user ${ownerId}`);
+        } catch (socketError) {
+          logger.error('Error emitting socket events for new message:', socketError);
+        }
+      }
 
     } catch (error) {
-      logger.error(`Error saving incoming message for owner ${ownerId}:`, error);
+      logger.error(`Error saving incoming message for owner ${ownerId}:`, {
+        message: error.message,
+        name: error.name,
+        code: error.code,
+        constraint: error.original?.constraint,
+        detail: error.original?.detail,
+        messageId: msg.key?.id,
+        remoteJid: msg.key?.remoteJid,
+        senderId: senderId,
+        stack: error.stack
+      });
     }
   }
 
   async processBotResponse(ownerId, senderId, mobileNo, messageContent, chatId) {
     try {
-      const lowerContent = messageContent.toLowerCase();
+      // Skip processing if missing required data
+      if (!mobileNo || !messageContent) {
+        logger.warn(`Missing required data for bot response: mobileNo=${mobileNo}, messageContent=${!!messageContent}`);
+        return;
+      }
+
+      const lowerContent = messageContent.toLowerCase().trim();
       let response = null;
 
-      // Check for specific bot responses
-      const botResponse = await BotResponse.findOne({
-        where: { 
-          triggerKeyword: lowerContent,
-          isActive: true 
-        },
-        order: [['priority', 'DESC']]
-      });
+      // Log the incoming message for debugging
+      logger.info(`Processing bot response for message: "${lowerContent}" from ${mobileNo} (owner: ${ownerId})`);
 
-      if (botResponse) {
-        response = botResponse.responseText;
-      } else if (lowerContent.includes('catalog') || lowerContent.includes('products')) {
-        response = await this.generateProductCatalog();
-      } else if (lowerContent.includes('order')) {
-        response = await this.handleOrderRequest(senderId, messageContent);
-      } else if (lowerContent.includes('status') || lowerContent.includes('my order')) {
-        response = await this.getOrderStatus(senderId);
-      } else if (lowerContent.includes('hello') || lowerContent.includes('hi')) {
-        response = '👋 Hello! Welcome to our store. Type "catalog" to see our products or "help" for assistance.';
-      } else if (lowerContent.includes('help')) {
-        response = `🤖 *How can I help you?*
+      // ALWAYS respond to "hi" or "hello" messages for testing
+      if (lowerContent === 'hi' || lowerContent === 'hello') {
+        response = '👋 Hello! This is a test response. I received your message successfully. Type "help" for more options.';
+        logger.info(`Sending test greeting response for "${lowerContent}"`);
+      }
+      // Check for specific bot responses
+      else {
+        const botResponse = await BotResponse.findOne({
+          where: { 
+            triggerKeyword: lowerContent,
+            isActive: true 
+          },
+          order: [['priority', 'DESC']]
+        });
+
+        if (botResponse) {
+          response = botResponse.responseText;
+          logger.info(`Found matching bot response for "${lowerContent}"`);
+        } else if (lowerContent.includes('catalog') || lowerContent.includes('products')) {
+          response = await this.generateProductCatalog();
+          logger.info(`Generating product catalog for "${lowerContent}"`);
+        } else if (lowerContent.includes('order')) {
+          response = await this.handleOrderRequest(senderId, messageContent);
+          logger.info(`Processing order request for "${lowerContent}"`);
+        } else if (lowerContent.includes('status') || lowerContent.includes('my order')) {
+          response = await this.getOrderStatus(senderId);
+          logger.info(`Getting order status for "${lowerContent}"`);
+        } else if (lowerContent.includes('help')) {
+          response = `🤖 *How can I help you?*
 
 📋 Type "catalog" - View our products
 🛒 Type "ORDER [Product]:[Qty]" - Place an order
@@ -449,16 +758,46 @@ class MultiUserWhatsAppService {
 💬 Type "contact" - Get contact info
 
 Example: ORDER Gaming Laptop:1`;
-      } else {
-        response = 'Thank you for your message! Type "help" to see what I can do for you.';
+          logger.info(`Sending help menu for "${lowerContent}"`);
+        } else {
+          response = 'Thank you for your message! Type "help" to see what I can do for you.';
+          logger.info(`Sending default response for "${lowerContent}"`);
+        }
       }
 
       if (response) {
-        await this.sendTextMessage(ownerId, mobileNo + '@s.whatsapp.net', response);
+        logger.info(`Sending bot response to ${mobileNo}: "${response.substring(0, 50)}..."`);
+        
+        // Ensure the number is properly formatted
+        let formattedNumber = mobileNo;
+        if (!formattedNumber.includes('@')) {
+          // Remove any + sign at the beginning if present
+          formattedNumber = formattedNumber.replace(/^\+/, '');
+          formattedNumber = `${formattedNumber}@s.whatsapp.net`;
+        }
+        
+        // Log the exact formatted number being used
+        logger.info(`Formatted number for response: ${formattedNumber}`);
+        
+        // Send the response
+        const result = await this.sendTextMessage(ownerId, formattedNumber, response);
+        
+        if (result.success) {
+          logger.info(`Successfully sent bot response to ${mobileNo}`);
+        } else {
+          logger.error(`Failed to send bot response to ${mobileNo}: ${result.error}`);
+        }
+      } else {
+        logger.warn(`No response generated for message "${lowerContent}" from ${mobileNo}`);
       }
 
     } catch (error) {
-      logger.error(`Error processing bot response for owner ${ownerId}:`, error);
+      logger.error(`Error processing bot response for owner ${ownerId}:`, {
+        error: error.message,
+        stack: error.stack,
+        mobileNo,
+        messageContent: messageContent?.substring(0, 100)
+      });
     }
   }
 
@@ -624,28 +963,75 @@ Example: ORDER Gaming Laptop:1`;
     if (!connectionData || !connectionData.sock || !connectionData.connectionStatus.connected) {
       // Try to reconnect if not connected
       if (!connectionData?.isConnecting) {
-        await this.connectUser(userId);
+        try {
+          logger.info(`Attempting to connect WhatsApp for user ${userId} before sending message`);
+          await this.connectUser(userId);
+        } catch (connError) {
+          logger.error(`Failed to connect WhatsApp for user ${userId}:`, connError);
+          return {
+            success: false,
+            error: `WhatsApp connection failed: ${connError.message}`,
+            timestamp: Date.now()
+          };
+        }
       }
       
       // If still not connected after reconnection attempt
       const updatedConnection = this.connections.get(userId);
       if (!updatedConnection?.connectionStatus.connected) {
-        throw new Error(`WhatsApp is not connected for user ${userId}`);
+        logger.error(`WhatsApp is not connected for user ${userId} after connection attempt`);
+        return {
+          success: false,
+          error: `WhatsApp is not connected. Please scan the QR code first.`,
+          timestamp: Date.now()
+        };
       }
     }
 
     try {
       const sock = this.connections.get(userId).sock;
       
-      // Format the phone number
-      const formattedTo = to.startsWith('+') ? to.slice(1) : to;
-      const jid = formattedTo.includes('@') ? formattedTo : `${formattedTo}@s.whatsapp.net`;
+      // Format the phone number with detailed logging
+      let formattedTo = to;
+      logger.info(`Original 'to' number: ${to}`);
+      
+      if (!to.includes('@')) {
+        // Remove any + sign at the beginning
+        formattedTo = to.startsWith('+') ? to.slice(1) : to;
+        formattedTo = `${formattedTo}@s.whatsapp.net`;
+        logger.info(`Reformatted 'to' number: ${formattedTo}`);
+      }
 
-      const result = await sock.sendMessage(jid, { text: message });
-      logger.info(`Message sent from user ${userId} to ${jid}`);
+      // Log the exact message being sent
+      logger.info(`Attempting to send message from user ${userId} to ${formattedTo}`);
+      logger.info(`Message content (first 50 chars): ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`);
+      
+      // Send with retry logic
+      let retryCount = 0;
+      const maxRetries = 3;
+      let result;
+      
+      while (retryCount < maxRetries) {
+        try {
+          result = await sock.sendMessage(formattedTo, { text: message });
+          break; // Success, exit retry loop
+        } catch (sendError) {
+          retryCount++;
+          logger.warn(`Send attempt ${retryCount} failed: ${sendError.message}`);
+          
+          if (retryCount >= maxRetries) {
+            throw sendError; // Re-throw if all retries failed
+          }
+          
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      logger.info(`Message sent successfully from user ${userId} to ${formattedTo}`);
       
       // Save outgoing message
-      await this.saveOutgoingMessage(userId, jid, message, result?.key?.id);
+      await this.saveOutgoingMessage(userId, formattedTo, message, result?.key?.id);
       
       return {
         success: true,
@@ -653,7 +1039,12 @@ Example: ORDER Gaming Laptop:1`;
         timestamp: Date.now()
       };
     } catch (error) {
-      logger.error(`Failed to send message from user ${userId} to ${to}:`, error);
+      logger.error(`Failed to send message from user ${userId} to ${to}:`, {
+        error: error.message,
+        stack: error.stack,
+        userId,
+        to
+      });
       return {
         success: false,
         error: error.message,
@@ -681,7 +1072,7 @@ Example: ORDER Gaming Laptop:1`;
       }
 
       // Save outgoing message
-      await Message.create({
+      const message = await Message.create({
         conversationId: conversation.id,
         senderId: ownerId,
         messageId: messageId || `out_${Date.now()}_${Math.random()}`,
@@ -689,6 +1080,30 @@ Example: ORDER Gaming Laptop:1`;
         messageType: 'text',
         isOutgoing: true
       });
+
+      // Emit socket event for outgoing message
+      try {
+        const socketSvc = getSocketService();
+        const messageData = {
+          id: message.id,
+          messageId: message.messageId,
+          content: message.content,
+          messageType: message.messageType,
+          isOutgoing: message.isOutgoing,
+          createdAt: message.createdAt,
+          conversationId: conversation.id,
+          sender: {
+            id: ownerId
+          }
+        };
+        
+        // Emit to conversation room
+        socketSvc.emitToConversation(conversation.id, 'message_sent', messageData);
+        
+        logger.info(`Socket event emitted for outgoing message from user ${ownerId}`);
+      } catch (socketError) {
+        logger.error('Error emitting socket events for outgoing message:', socketError);
+      }
 
     } catch (error) {
       logger.error(`Error saving outgoing message for owner ${ownerId}:`, error);
@@ -705,6 +1120,21 @@ Example: ORDER Gaming Laptop:1`;
           userId,
           ...updates
         });
+      }
+      
+      // Emit socket event for connection status update
+      try {
+        const socketSvc = getSocketService();
+        socketSvc.emitConnectionStatus(userId, {
+          connected: updates.isConnected,
+          connectionState: updates.connectionState,
+          lastConnectedAt: updates.lastConnectedAt,
+          qrCode: updates.qrCode,
+          userId
+        });
+        logger.info(`Socket connection status update emitted for user ${userId}`);
+      } catch (socketError) {
+        logger.error('Error emitting socket connection status:', socketError);
       }
     } catch (error) {
       logger.error(`Failed to update session status for user ${userId}:`, error);

@@ -76,7 +76,8 @@ router.get('/', (req, res) => {
           },
           conversations: {
             'GET /api/whatsapp/conversations': 'Get user conversations (requires auth)',
-            'GET /api/whatsapp/conversations/messages/:conversationId': 'Get conversation messages (requires auth)'
+            'GET /api/whatsapp/conversations/messages/:conversationId': 'Get conversation messages (requires auth)',
+            'GET /api/whatsapp/messages/between': 'Get messages between two phone numbers (requires auth)'
           },
           contacts: {
             'GET /api/whatsapp/contacts': 'Get contact list (requires auth)',
