@@ -131,7 +131,36 @@ exports.deleteUser = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-}; 
+};
+
+exports.getMe = async (req, res, next) => {
+    // The user is already authenticated and available in req.user from authMiddleware
+    const user = req.user;
+    
+    if (!user) {
+      return next(createError(404, 'User not found'));
+    }
+    
+    // Return user data without password
+    const userData = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      mobileNo: user.mobileNo,
+      role: user.role,
+      isActive: user.isActive,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    };
+    
+    res.json({
+      status: 200,
+      message: 'User profile fetched successfully',
+      data: {
+        user: userData
+      }
+    });
+}
 
 exports.getUserById = async (req, res, next) => {
   try {

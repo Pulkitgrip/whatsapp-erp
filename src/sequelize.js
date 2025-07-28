@@ -4,33 +4,25 @@ require('dotenv').config();
 let sequelize;
 
 try {
-  // Check if using SQLite (for local development/testing)
-  if (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('sqlite:')) {
-    sequelize = new Sequelize(process.env.DATABASE_URL, {
-      dialect: 'sqlite',
+  // PostgreSQL configuration using individual credentials (no DATABASE_URL)
+  sequelize = new Sequelize(
+    process.env.PG_DATABASE,
+    process.env.PG_USER , 
+    process.env.PG_PASSWORD,
+    {
+      host: process.env.PG_HOST ,
+      port: process.env.PG_PORT,
+      dialect: 'postgres',
       logging: false,
-      storage: './database.sqlite'
-    });
-  } else {
-    // PostgreSQL configuration
-    sequelize = new Sequelize(
-      process.env.PG_DATABASE,
-      process.env.PG_USER,
-      process.env.PG_PASSWORD,
-      {
-        host: process.env.PG_HOST,
-        port: process.env.PG_PORT,
-        dialect: 'postgres',
-        logging: false,
-        dialectOptions: {
-          ssl: {
-            require: true,
-            rejectUnauthorized: false
-          }
+      dialectOptions: {
+        ssl: {
+          require: true,
+          rejectUnauthorized: false,
+          ca: process.env.PG_SSL_CA
         }
       }
-    );
-  }
+    }
+  );
 } catch (error) {
   console.error('Error initializing Sequelize:', error);
   throw new Error('Database configuration failed');
