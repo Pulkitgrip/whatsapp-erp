@@ -55,7 +55,8 @@ exports.createOrder = async (req, res, next) => {
   const transaction = await sequelize.transaction();
   
   try {
-    const { items, userMobileNo } = req.body;
+    let { items, userMobileNo, mobileNo } = req.body;
+    userMobileNo = mobileNo || userMobileNo;
     
     if (!items || !Array.isArray(items) || items.length === 0) {
       return next(createError(400, 'Items array is required and cannot be empty'));
